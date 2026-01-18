@@ -3,7 +3,9 @@ import os
 import time
 import datetime as dt
 import requests
-import telegram
+
+# 用同步版 telegram
+import telegram.sync as telegram
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID   = os.getenv("CHAT_ID")
@@ -21,9 +23,8 @@ def price(sym: str) -> float:
     raise RuntimeError(f"{sym} not found")
 
 def send(msg: str):
-    import telegram
-    bot = telegram.Bot(token=BOT_TOKEN)
-    bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode=None)
+    # 同步发送，无警告
+    bot.send_message(chat_id=CHAT_ID, text=msg)
 
 def main():
     global last_alert
