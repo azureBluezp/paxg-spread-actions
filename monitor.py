@@ -8,7 +8,7 @@ from telegram import Bot
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID   = os.getenv("CHAT_ID")
-CHECK_SEC = int(os.getenv("CHECK_SEC", 10))   # ← 彻底无引号
+CHECK_SEC = int(os.getenv("CHECK_SEC"))   # ← 彻底无引号
 
 bot = Bot(token=BOT_TOKEN)
 BASE_URL = "https://omni-client-api.prod.ap-northeast-1.variational.io"
