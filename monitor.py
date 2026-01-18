@@ -21,7 +21,8 @@ def price(sym: str) -> float:
     raise RuntimeError(f"{sym} not found")
 
 def send(msg: str):
-    bot.send_message(chat_id=CHAT_ID, text=msg)
+    import telegram
+    telegram.Bot(token=BOT_TOKEN).send_message(chat_id=CHAT_ID, text=msg)
 
 def main():
     global last_alert
