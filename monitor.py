@@ -3,15 +3,13 @@ import os
 import time
 import datetime as dt
 import requests
-
-# 用同步版 telegram
-import telegram.sync as telegram
+from telegram import Bot
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID   = os.getenv("CHAT_ID")
 CHECK_SEC = int(os.getenv("CHECK_SEC", 30))
 
-bot = telegram.Bot(token=BOT_TOKEN)
+bot = Bot(token=BOT_TOKEN)
 last_alert = None
 BASE_URL = "https://omni-client-api.prod.ap-northeast-1.variational.io"
 
@@ -23,7 +21,6 @@ def price(sym: str) -> float:
     raise RuntimeError(f"{sym} not found")
 
 def send(msg: str):
-    # 同步发送，无警告
     bot.send_message(chat_id=CHAT_ID, text=msg)
 
 def main():
