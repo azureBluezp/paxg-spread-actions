@@ -32,7 +32,7 @@ def price(sym: str) -> float:
     for i in data["listings"]:
         if i["ticker"] == sym:
             return float(i["mark_price"])
-    raise RuntimeError(f"{sym} not found")
+    raise RuntimeError(f"{sym} not found}")
 
 def send(msg: str):
     bot.send_message(chat_id=CHAT_ID, text=msg)
