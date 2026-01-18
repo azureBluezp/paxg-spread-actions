@@ -10,7 +10,6 @@ CHAT_ID   = os.getenv("CHAT_ID")
 CHECK_SEC = int(os.getenv("CHECK_SEC", 30))
 
 bot = Bot(token=BOT_TOKEN)
-
 BASE_URL = "https://omni-client-api.prod.ap-northeast-1.variational.io"
 
 # ---------- 档位锁 ----------
@@ -38,17 +37,17 @@ def main():
 
     # ===== 高档位锁：≥15 每 1 元一档 =====
     if spread >= 15:
-       档位 = int(spread)          # 15 16 17 ...
-        if 档位 not in high_locked:
-            high_locked.add(档位)
-            send(f"🔔 PAXG 溢价 ≥{档位}！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
+        gear = int(spread)          # 15 16 17 ...
+        if gear not in high_locked:
+            high_locked.add(gear)
+            send(f"🔔 PAXG 溢价 ≥{gear}！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
 
     # ===== 低档位锁：≤10 每 1 元一档 =====
     elif spread <= 10:
-        档位 = int(spread)          # 10 9 8 ...
-        if 档位 not in low_locked:
-            low_locked.add(档位)
-            send(f"🔔 PAXG 溢价 ≤{档位}！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
+        gear = int(spread)          # 10 9 8 ...
+        if gear not in low_locked:
+            low_locked.add(gear)
+            send(f"🔔 PAXG 溢价 ≤{gear}！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
 
 
 if __name__ == "__main__":
