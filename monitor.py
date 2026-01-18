@@ -13,13 +13,13 @@ CHECK_SEC = int(os.getenv("CHECK_SEC", 30))
 bot = Bot(token=BOT_TOKEN)
 BASE_URL = "https://omni-client-api.prod.ap-northeast-1.variational.io"
 
-LOCK_FILE = "step_lock.json"   # 0.5 元阶梯锁
+LOCK_FILE = "strict_step_lock.json"   # 严格阶梯锁
 
 
 def load_lock():
     if os.path.exists(LOCK_FILE):
         return json.load(open(LOCK_FILE))
-    return {"high": {}, "low": {}}
+    return {"high_peak": 16.0, "low_valley": 10.0}
 
 
 def save_lock(data):
@@ -51,29 +51,35 @@ def main():
 
     lock = load_lock()
 
-    # ===== 0.5 元严格阶梯锁：≥16 每 0.5 一档 =====
+    # ===== 严格大于上一档 +0.5：≥16 =====
     if spread >= 16:
         gear = int(spread * 2) / 2        # 16.0 16.5 17.0 ...
         key = hour_key(gear)              # 小时锁
         if key not in lock.get("high", {}):
-            lock.setdefault("high", {})[key] = True
-            save_lock(lock)
-            send(f"🔔 PAXG 新高溢价 ≥{gear:.1f}！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
+            old = lock.get("high_peak", 16.0)
+            if spread > old + 0.5:        # 必须 > 上一档 +0.5
+                lock.setdefault("high", {})[key] = True
+                lock["high_peak"] = spread
+                save_lock(lock)
+                send(f"🔔 PAXG 新高溢价 ≥{gear:.1f}！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
 
-    # ===== 0.5 元严格阶梯锁：≤10 每 0.5 一档 =====
+    # ===== 严格小于上一档 -0.5：≤10 =====
     elif spread <= 10:
         gear = int(spread * 2) / 2        # 10.0 9.5 9.0 ...
         key = hour_key(gear)              # 小时锁
         if key not in lock.get("low", {}):
-            lock.setdefault("low", {})[key] = True
-            save_lock(lock)
-            send(f"🔔 PAXG 新低溢价 ≤{gear:.1f}！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
+            old = lock.get("low_valley", 10.0)
+            if spread < old - 0.5:        # 必须 < 上一档 -0.5
+                lock.setdefault("low", {})[key] = True
+                lock["low_valley"] = spread
+                save_lock(lock)
+                send(f"🔔 PAXG 新低溢价 ≤{gear:.1f}！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
 
 
 if __name__ == "__main__":
     # 仅第一次部署发消息
     if not os.path.exists(LOCK_FILE):
-        send("✅ 0.5元严格阶梯锁监控已启动")
+        send("✅ 严格阶梯锁监控已启动")
     main()
     while True:
         try:
