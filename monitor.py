@@ -27,9 +27,8 @@ def save_lock(data):
         json.dump(data, f)
 
 
-def second_key(gear: float, tag: str) -> str:
-    """秒级锁：同一秒内只报一次"""
-    return f"{dt.datetime.now():%Y-%m-%d-%H-%M-%S}-{gear}-{tag}"
+def hour_key(gear: float) -> str:
+    return f"{dt.datetime.now():%Y-%m-%d-%H}-{gear}"
 
 
 def price(sym: str) -> float:
@@ -37,7 +36,7 @@ def price(sym: str) -> float:
     for i in data["listings"]:
         if i["ticker"] == sym:
             return float(i["mark_price"])
-    raise RuntimeError(f"{sym} not found")   # ← 语法已修正
+    raise RuntimeError(f"{sym} not found")
 
 
 def send(msg: str):
@@ -52,19 +51,19 @@ def main():
 
     lock = load_lock()
 
-    # ===== 0.5 元阶梯锁：≥16 每 0.5 一档 + 秒级锁 =====
+    # ===== 0.5 元严格阶梯锁：≥16 每 0.5 一档 =====
     if spread >= 16:
         gear = int(spread * 2) / 2        # 16.0 16.5 17.0 ...
-        key = second_key(gear, "high")    # 秒级键
+        key = hour_key(gear)              # 小时锁
         if key not in lock.get("high", {}):
             lock.setdefault("high", {})[key] = True
             save_lock(lock)
             send(f"🔔 PAXG 新高溢价 ≥{gear:.1f}！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
 
-    # ===== 0.5 元阶梯锁：≤10 每 0.5 一档 + 秒级锁 =====
+    # ===== 0.5 元严格阶梯锁：≤10 每 0.5 一档 =====
     elif spread <= 10:
         gear = int(spread * 2) / 2        # 10.0 9.5 9.0 ...
-        key = second_key(gear, "low")     # 秒级键
+        key = hour_key(gear)              # 小时锁
         if key not in lock.get("low", {}):
             lock.setdefault("low", {})[key] = True
             save_lock(lock)
@@ -74,7 +73,7 @@ def main():
 if __name__ == "__main__":
     # 仅第一次部署发消息
     if not os.path.exists(LOCK_FILE):
-        send("✅ 0.5元阶梯+秒级锁监控已启动")
+        send("✅ 0.5元严格阶梯锁监控已启动")
     main()
     while True:
         try:
