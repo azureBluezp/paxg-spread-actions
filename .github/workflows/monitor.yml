@@ -2,25 +2,24 @@ name: PAXG-XAUT-Spread
 
 on:
   schedule:
-    - cron: '*/11 * * * *'   # 每 11 分钟触发（可改）
+    - cron: '*/11 * * * *'
   workflow_dispatch:
 
+# ===== 强制串行：同一秒只剩 1 台 runner =====
 concurrency:
-  group: single               # 必须与你创建的 Environment 同名
-  cancel-in-progress: true    # 强制串行：同一秒只剩 1 台 runner
+  group: ${{ github.run_id }}          # 全局单实例
+  cancel-in-progress: true
 
 jobs:
-  monitor:
-    environment: single        # 对应你刚创建的 Environment
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-      - run: pip install -r requirements.txt
-      - run: python monitor.py
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
-          CHECK_SEC: ${{ secrets.CHECK_SEC }}
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/checkout@v3
+    - uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    - run: pip install -r requirements.txt
+    - run: python monitor.py
+      env:
+        BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        CHAT_ID: ${{ secrets.CHAT_ID }}
+        CHECK_SEC: ${{ secrets.CHECK_SEC }}
