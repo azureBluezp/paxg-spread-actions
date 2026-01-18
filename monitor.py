@@ -6,37 +6,94 @@ import requests
 import json
 from telegram import Bot
 
+# 安全获取环境变量
+def get_env_int(key: str, default: int) -> int:
+    """安全获取整数环境变量，处理占位符和引号"""
+    value = os.getenv(key)
+    if value is None:
+        return default
+    
+    # 清理引号
+    value = value.strip()
+    while (value.startswith('"') and value.endswith('"')) or \
+          (value.startswith("'") and value.endswith("'")):
+        value = value[1:-1].strip()
+    
+    # 如果是占位符，返回默认值
+    if "***" in value:
+        print(f"警告: {key} 是占位符，使用默认值 {default}")
+        return default
+    
+    try:
+        return int(value)
+    except ValueError:
+        print(f"警告: {key} 值 '{value}' 不是有效整数，使用默认值 {default}")
+        return default
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID   = os.getenv("CHAT_ID")
-#CHECK_SEC = int(os.getenv("CHECK_SEC", 30))   # ← 彻底无引号
-CHECK_SEC = 30
+CHECK_SEC = get_env_int("CHECK_SEC", 30)  # 使用安全函数
 
-bot = Bot(token=BOT_TOKEN)
+# 检查必要的环境变量
+if not BOT_TOKEN:
+    print("错误: BOT_TOKEN 环境变量未设置")
+    exit(1)
+
+if not CHAT_ID:
+    print("错误: CHAT_ID 环境变量未设置")
+    exit(1)
+
+try:
+    bot = Bot(token=BOT_TOKEN)
+    # 测试 Bot 是否有效
+    bot.get_me()
+except Exception as e:
+    print(f"错误: Telegram Bot 初始化失败: {e}")
+    exit(1)
+
 BASE_URL = "https://omni-client-api.prod.ap-northeast-1.variational.io"
 
 LOCK_FILE = "strict_step_lock.json"
 
 def load_lock():
     if os.path.exists(LOCK_FILE):
-        return json.load(open(LOCK_FILE))
-    return {"high_peak": 16.0, "low_valley": 10.0}
+        try:
+            return json.load(open(LOCK_FILE))
+        except json.JSONDecodeError:
+            print("警告: 锁定文件损坏，使用默认值")
+    
+    # 默认值，确保包含所有必要的键
+    return {
+        "high_peak": 16.0, 
+        "low_valley": 10.0,
+        "high": {},
+        "low": {}
+    }
 
 def save_lock(data):
     with open(LOCK_FILE, "w") as f:
         json.dump(data, f)
 
 def hour_key(gear: float) -> str:
-    return f"{dt.datetime.now():%Y-%m-%d-%H}-{gear}"
+    return f"{dt.datetime.now():%Y-%m-%d-%H}-{gear:.1f}"
 
 def price(sym: str) -> float:
-    data = requests.get(f"{BASE_URL}/metadata/stats", timeout=10).json()
-    for i in data["listings"]:
-        if i["ticker"] == sym:
-            return float(i["mark_price"])
-    raise RuntimeError(f"{sym} not found")   # ← 已去掉多余 }
+    try:
+        data = requests.get(f"{BASE_URL}/metadata/stats", timeout=10).json()
+        for i in data.get("listings", []):
+            if i.get("ticker") == sym:
+                return float(i.get("mark_price", 0))
+        raise RuntimeError(f"{sym} not found")
+    except Exception as e:
+        print(f"获取价格失败: {e}")
+        raise
 
 def send(msg: str):
-    bot.send_message(chat_id=CHAT_ID, text=msg)
+    try:
+        bot.send_message(chat_id=CHAT_ID, text=msg)
+        print(f"消息已发送: {msg}")
+    except Exception as e:
+        print(f"发送消息失败: {e}")
 
 def main():
     paxg = price("PAXG")
@@ -50,10 +107,15 @@ def main():
     if spread >= 16:
         gear = int(spread * 2) / 2
         key = hour_key(gear)
-        if key not in lock.get("high", {}):
+        
+        # 确保 high 字典存在
+        if "high" not in lock:
+            lock["high"] = {}
+            
+        if key not in lock["high"]:
             old = lock.get("high_peak", 16.0)
             if spread > old + 0.5:
-                lock.setdefault("high", {})[key] = True
+                lock["high"][key] = True
                 lock["high_peak"] = spread
                 save_lock(lock)
                 send(f"🔔 PAXG 新高溢价 ≥{gear:.1f}！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
@@ -62,21 +124,38 @@ def main():
     elif spread <= 10:
         gear = int(spread * 2) / 2
         key = hour_key(gear)
-        if key not in lock.get("low", {}):
+        
+        # 确保 low 字典存在
+        if "low" not in lock:
+            lock["low"] = {}
+            
+        if key not in lock["low"]:
             old = lock.get("low_valley", 10.0)
             if spread < old - 0.5:
-                lock.setdefault("low", {})[key] = True
+                lock["low"][key] = True
                 lock["low_valley"] = spread
                 save_lock(lock)
                 send(f"🔔 PAXG 新低溢价 ≤{gear:.1f}！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
 
 if __name__ == "__main__":
+    print(f"=== PAXG 监控程序启动 ===")
+    print(f"检查间隔: {CHECK_SEC}秒")
+    print(f"启动时间: {dt.datetime.now():%Y-%m-%d %H:%M:%S}")
+    
+    # 首次运行发送启动消息
     if not os.path.exists(LOCK_FILE):
+        print("首次运行，发送启动消息...")
         send("✅ 严格阶梯锁监控已启动")
-    main()
+    else:
+        print("检测到已有的锁定文件，不发送启动消息")
+    
+    # 运行主循环
     while True:
         try:
             main()
+        except KeyboardInterrupt:
+            print("监控已停止")
+            break
         except Exception as e:
-            print("抓取失败:", e)
+            print(f"抓取失败: {e}")
         time.sleep(CHECK_SEC)
