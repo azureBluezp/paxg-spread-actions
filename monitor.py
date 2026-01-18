@@ -18,7 +18,7 @@ LOCK_FILE = "strict_step_lock.json"
 def load_lock():
     if os.path.exists(LOCK_FILE):
         return json.load(open(LOCK_FILE))
-    return {"high_peak": 16.0, "low_valley": 10.0}
+    return {"high_peak": 16.0, "low_valley": 10.0"}
 
 def save_lock(data):
     with open(LOCK_FILE, "w") as f:
