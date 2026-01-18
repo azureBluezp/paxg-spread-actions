@@ -8,7 +8,7 @@ from telegram import Bot
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID   = os.getenv("CHAT_ID")
-CHECK_SEC = int(os.getenv("CHECK_SEC", 30))   # ← 彻底无引号
+CHECK_SEC = int(os.getenv("CHECK_SEC", 30))
 
 bot = Bot(token=BOT_TOKEN)
 BASE_URL = "https://omni-client-api.prod.ap-northeast-1.variational.io"
@@ -32,7 +32,7 @@ def price(sym: str) -> float:
     for i in data["listings"]:
         if i["ticker"] == sym:
             return float(i["mark_price"])
-    raise RuntimeError(f"{sym} not found}")
+    raise RuntimeError(f"{sym} not found")   # ← 已去掉多余 }
 
 def send(msg: str):
     bot.send_message(chat_id=CHAT_ID, text=msg)
