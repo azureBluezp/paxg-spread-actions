@@ -2,17 +2,16 @@ name: PAXG-XAUT-Spread
 
 on:
   schedule:
-    - cron: '*/5 * * * *'   # 每 5 分钟触发（内部 30 秒循环）
+    - cron: '*/11 * * * *'   # 每 11 分钟触发（可改）
   workflow_dispatch:
 
-# ===== 跨 runner 单实例：同一秒只剩 1 台 =====
 concurrency:
-  group: ${{ github.environment }}
-  cancel-in-progress: true
+  group: single               # 必须与你创建的 Environment 同名
+  cancel-in-progress: true    # 强制串行：同一秒只剩 1 台 runner
 
 jobs:
   monitor:
-    environment: single        # 必须先新建同名 Environment
+    environment: single        # 对应你刚创建的 Environment
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
