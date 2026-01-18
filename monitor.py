@@ -13,7 +13,7 @@ CHECK_SEC = int(os.getenv("CHECK_SEC", 30))
 bot = Bot(token=BOT_TOKEN)
 BASE_URL = "https://omni-client-api.prod.ap-northeast-1.variational.io"
 
-LOCK_FILE = "hour_lock.json"   # 同仓库持久化
+LOCK_FILE = "hour_lock.json"   # 持久化锁
 
 
 def load_lock():
@@ -37,7 +37,7 @@ def price(sym: str) -> float:
     for i in data["listings"]:
         if i["ticker"] == sym:
             return float(i["mark_price"])
-    raise RuntimeError(f"{sym} not found}")
+    raise RuntimeError(f"{sym} not found")   # ← 语法已修正
 
 
 def send(msg: str):
