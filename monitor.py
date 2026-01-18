@@ -26,7 +26,13 @@ def price(sym: str) -> float:
 
 
 def send(msg: str):
-    bot.send_message(chat_id=CHAT_ID, text=msg)
+    # 自动追加策略提示
+    strategy = ""
+    if "溢价 ≥" in msg:
+        strategy = "\n策略：做空 PAXG，做多 XAUT"
+    elif "溢价 ≤" in msg:
+        strategy = "\n策略：做多 PAXG，做空 XAUT"
+    bot.send_message(chat_id=CHAT_ID, text=msg + strategy)
 
 
 def main():
@@ -51,7 +57,7 @@ def main():
 
 
 if __name__ == "__main__":
-    send("✅ 档位锁监控已启动")
+    send("✅ 档位锁+策略提示监控已启动")
     while True:
         try:
             main()
