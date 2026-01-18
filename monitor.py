@@ -3,6 +3,7 @@ import os
 import time
 import datetime as dt
 import requests
+import json
 from telegram import Bot
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -12,13 +13,22 @@ CHECK_SEC = int(os.getenv("CHECK_SEC", 30))
 bot = Bot(token=BOT_TOKEN)
 BASE_URL = "https://omni-client-api.prod.ap-northeast-1.variational.io"
 
-# ---------- 0.5 元小时档位锁 ----------
-high_locked: set[str] = set()   # 格式 "YYYY-MM-DD-HH-档位"
-low_locked:  set[str] = set()
+LOCK_FILE = "hour_lock.json"   # 持久化锁
+
+
+def load_lock():
+    if os.path.exists(LOCK_FILE):
+        with open(LOCK_FILE, "r") as f:
+            return json.load(f)
+    return {"high": {}, "low": {}}   # 结构 {"high": {"2026-01-18-15-30.0": true}}
+
+
+def save_lock(data):
+    with open(LOCK_FILE, "w") as f:
+        json.dump(data, f)
 
 
 def half_hour_key(gear: float) -> str:
-    """生成 小时-0.5档位 键"""
     return f"{dt.datetime.now():%Y-%m-%d-%H}-{gear}"
 
 
@@ -40,25 +50,29 @@ def main():
     spread = paxg - xaut
     print(f"{dt.datetime.now():%Y-%m-%d %H:%M:%S}  PAXG={paxg:.2f}  XAUT={xaut:.2f}  spread={spread:.2f}")
 
+    lock = load_lock()
+
     # ===== 0.5 元高档位锁：≥15 每 0.5 一档 =====
     if spread >= 15:
-        gear = round(spread * 2) / 2   # 15.0 15.5 16.0 16.5 ...
+        gear = round(spread * 2) / 2   # 15.0 15.5 16.0 ...
         key = half_hour_key(gear)
-        if key not in high_locked:
-            high_locked.add(key)
+        if key not in lock["high"]:
+            lock["high"][key] = True
+            save_lock(lock)
             send(f"🔔 PAXG 溢价 ≥{gear:.1f}！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
 
     # ===== 0.5 元低档位锁：≤10 每 0.5 一档 =====
     elif spread <= 10:
-        gear = round(spread * 2) / 2   # 10.0 9.5 9.0 8.5 ...
+        gear = round(spread * 2) / 2   # 10.0 9.5 9.0 ...
         key = half_hour_key(gear)
-        if key not in low_locked:
-            low_locked.add(key)
+        if key not in lock["low"]:
+            lock["low"][key] = True
+            save_lock(lock)
             send(f"🔔 PAXG 溢价 ≤{gear:.1f}！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
 
 
 if __name__ == "__main__":
-    send("✅ 0.5元小时档位锁监控已启动")
+    send("✅ 文件持久化+0.5元小时档位锁监控已启动")
     while True:
         try:
             main()
