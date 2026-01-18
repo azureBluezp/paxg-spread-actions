@@ -7,19 +7,20 @@ on:
 
 # ===== 强制串行：同一秒只剩 1 台 runner =====
 concurrency:
-  group: ${{ github.run_id }}          # 全局单实例
+  group: ${{ github.run_id }}
   cancel-in-progress: true
 
 jobs:
-  runs-on: ubuntu-latest
-  steps:
-    - uses: actions/checkout@v3
-    - uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-    - run: pip install -r requirements.txt
-    - run: python monitor.py
-      env:
-        BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-        CHAT_ID: ${{ secrets.CHAT_ID }}
-        CHECK_SEC: ${{ secrets.CHECK_SEC }}
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - run: python monitor.py
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          CHECK_SEC: ${{ secrets.CHECK_SEC }}
