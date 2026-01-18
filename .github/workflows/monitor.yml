@@ -1,7 +1,7 @@
 name: PAXG-XAUT-Spread
 on:
   schedule:
-    - cron: '*/1 * * * *'   # 1 分钟触发（脚本里 30 秒循环）
+  - cron: '*/5 * * * *'   # 每 5 分钟触发一次
   workflow_dispatch:
 jobs:
   monitor:
