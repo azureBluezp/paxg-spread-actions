@@ -3,7 +3,7 @@ name: PAXG-XAUT-Spread
 on:
   schedule:
     - cron: '*/11 * * * *'   # 每 11 分钟触发
-  workflow_dispatch:         # ← 已修正拼写
+  workflow_dispatch:
 
 # ===== 强制串行：同一秒只剩 1 台 runner =====
 concurrency:
@@ -21,6 +21,6 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python monitor.py
         env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}"
-          CHAT_ID: ${{ secrets.CHAT_ID }}"
-          CHECK_SEC: ${{ secrets.CHECK_SEC }}"
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          CHECK_SEC: ${{ secrets.CHECK_SEC }}
