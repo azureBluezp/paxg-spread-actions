@@ -13,22 +13,22 @@ CHECK_SEC = int(os.getenv("CHECK_SEC", 30))
 bot = Bot(token=BOT_TOKEN)
 BASE_URL = "https://omni-client-api.prod.ap-northeast-1.variational.io"
 
-LOCK_FILE = "hour_lock.json"
+PEAK_FILE = "peak_lock.json"   # 持久化峰值/谷值
 
 
-def load_lock():
-    if os.path.exists(LOCK_FILE):
-        return json.load(open(LOCK_FILE))
-    return {"high": {}, "low": {}}
+def load_peak():
+    if os.path.exists(PEAK_FILE):
+        return json.load(open(PEAK_FILE))
+    return {"high_peak": None, "low_valley": None}
 
 
-def save_lock(data):
-    with open(LOCK_FILE, "w") as f:
+def save_peak(data):
+    with open(PEAK_FILE, "w") as f:
         json.dump(data, f)
 
 
-def half_hour_key(gear: float) -> str:
-    return f"{dt.datetime.now():%Y-%m-%d-%H}-{gear}"
+def hour_key() -> str:
+    return dt.datetime.now().strftime("%Y-%m-%d-%H")
 
 
 def price(sym: str) -> float:
@@ -49,31 +49,30 @@ def main():
     spread = paxg - xaut
     print(f"{dt.datetime.now():%Y-%m-%d %H:%M:%S}  PAXG={paxg:.2f}  XAUT={xaut:.2f}  spread={spread:.2f}")
 
-    lock = load_lock()
+    peak = load_peak()
+    hour = hour_key()
 
-    # ===== 0.5 元高档位锁：≥15 每 0.5 一档 =====
-    if spread >= 15:
-        gear = round(spread * 2) / 2
-        key = half_hour_key(gear)
-        if key not in lock["high"]:
-            lock["high"][key] = True
-            save_lock(lock)
-            send(f"🔔 PAXG 溢价 ≥{gear:.1f}！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
+    # ===== 峰值锁：≥16 仅当 > 历史峰值 =====
+    if spread >= 16:
+        old_peak = peak.get("high_peak")
+        if old_peak is None or spread > old_peak:
+            peak["high_peak"] = spread
+            save_peak(peak)
+            send(f"🔔 PAXG 新高溢价 ≥16！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
 
-    # ===== 0.5 元低档位锁：≤10 每 0.5 一档 =====
+    # ===== 谷值锁：≤10 仅当 < 历史谷值 =====
     elif spread <= 10:
-        gear = round(spread * 2) / 2
-        key = half_hour_key(gear)
-        if key not in lock["low"]:
-            lock["low"][key] = True
-            save_lock(lock)
-            send(f"🔔 PAXG 溢价 ≤{gear:.1f}！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
+        old_valley = peak.get("low_valley")
+        if old_valley is None or spread < old_valley:
+            peak["low_valley"] = spread
+            save_peak(peak)
+            send(f"🔔 PAXG 新低溢价 ≤10！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
 
 
 if __name__ == "__main__":
-    # 仅第一次启动发消息，之后静默
-    if not os.path.exists(LOCK_FILE):
-        send("✅ 无启动刷屏+0.5元小时档位锁监控已启动")
+    # 仅第一次部署发消息
+    if not os.path.exists(PEAK_FILE):
+        send("✅ 峰值锁监控已启动")
     main()
     while True:
         try:
