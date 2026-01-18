@@ -12,9 +12,14 @@ CHECK_SEC = int(os.getenv("CHECK_SEC", 30))
 bot = Bot(token=BOT_TOKEN)
 BASE_URL = "https://omni-client-api.prod.ap-northeast-1.variational.io"
 
-# ---------- 档位锁 ----------
-high_locked: set[int] = set()   # ≥15 每 1 元一档
-low_locked:  set[int] = set()   # ≤10 每 1 元一档
+# ---------- 小时档位锁 ----------
+high_locked: set[str] = set()   # 格式 "YYYY-MM-DD-HH-档位"
+low_locked:  set[str] = set()
+
+
+def hour_key(gear: int) -> str:
+    """生成 小时-档位 键"""
+    return f"{dt.datetime.now():%Y-%m-%d-%H}-{gear}"
 
 
 def price(sym: str) -> float:
@@ -26,13 +31,7 @@ def price(sym: str) -> float:
 
 
 def send(msg: str):
-    # 自动追加策略提示
-    strategy = ""
-    if "溢价 ≥" in msg:
-        strategy = "\n策略：做空 PAXG，做多 XAUT"
-    elif "溢价 ≤" in msg:
-        strategy = "\n策略：做多 PAXG，做空 XAUT"
-    bot.send_message(chat_id=CHAT_ID, text=msg + strategy)
+    bot.send_message(chat_id=CHAT_ID, text=msg)
 
 
 def main():
@@ -43,21 +42,23 @@ def main():
 
     # ===== 高档位锁：≥15 每 1 元一档 =====
     if spread >= 15:
-        gear = int(spread)          # 15 16 17 ...
-        if gear not in high_locked:
-            high_locked.add(gear)
+        gear = int(spread)
+        key = hour_key(gear)
+        if key not in high_locked:
+            high_locked.add(key)
             send(f"🔔 PAXG 溢价 ≥{gear}！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
 
     # ===== 低档位锁：≤10 每 1 元一档 =====
     elif spread <= 10:
-        gear = int(spread)          # 10 9 8 ...
-        if gear not in low_locked:
-            low_locked.add(gear)
+        gear = int(spread)
+        key = hour_key(gear)
+        if key not in low_locked:
+            low_locked.add(key)
             send(f"🔔 PAXG 溢价 ≤{gear}！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
 
 
 if __name__ == "__main__":
-    send("✅ 档位锁+策略提示监控已启动")
+    send("✅ 小时档位锁监控已启动")
     while True:
         try:
             main()
