@@ -4,51 +4,82 @@ import time
 import datetime as dt
 import requests
 import json
-from telegram import Bot
+import re
 
-# 安全获取环境变量
-def get_env_int(key: str, default: int) -> int:
-    """安全获取整数环境变量，处理占位符和引号"""
-    value = os.getenv(key)
+def clean_env_value(value: str) -> str:
+    """清理环境变量值，移除所有引号和占位符"""
     if value is None:
-        return default
+        return ""
     
-    # 清理引号
-    value = value.strip()
+    value = str(value).strip()
+    
+    # 移除所有引号
     while (value.startswith('"') and value.endswith('"')) or \
           (value.startswith("'") and value.endswith("'")):
         value = value[1:-1].strip()
     
-    # 如果是占位符，返回默认值
+    # 移除占位符标记
     if "***" in value:
-        print(f"警告: {key} 是占位符，使用默认值 {default}")
+        # 尝试从占位符中提取实际值
+        match = re.search(r'(\d+)', value)
+        if match:
+            return match.group(1)
+        return ""
+    
+    return value
+
+def get_env(key: str, default: str = "") -> str:
+    """获取环境变量"""
+    value = os.getenv(key)
+    if value is None:
+        return default
+    return clean_env_value(value)
+
+def get_env_int(key: str, default: int) -> int:
+    """安全获取整数环境变量"""
+    value = get_env(key, "")
+    if not value:
         return default
     
     try:
         return int(value)
-    except ValueError:
-        print(f"警告: {key} 值 '{value}' 不是有效整数，使用默认值 {default}")
+    except (ValueError, TypeError):
         return default
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID   = os.getenv("CHAT_ID")
-CHECK_SEC = get_env_int("CHECK_SEC", 30)  # 使用安全函数
+# 获取环境变量
+BOT_TOKEN = get_env("BOT_TOKEN")
+CHAT_ID = get_env("CHAT_ID")
+CHECK_SEC = get_env_int("CHECK_SEC", 30)  # 默认30秒
+
+print(f"=== 环境变量检查 ===")
+print(f"BOT_TOKEN 长度: {len(BOT_TOKEN)}")
+print(f"CHAT_ID: {CHAT_ID}")
+print(f"CHECK_SEC: {CHECK_SEC}")
 
 # 检查必要的环境变量
 if not BOT_TOKEN:
     print("错误: BOT_TOKEN 环境变量未设置")
+    print("请在 GitHub Secrets 中设置正确的 BOT_TOKEN")
     exit(1)
 
 if not CHAT_ID:
     print("错误: CHAT_ID 环境变量未设置")
+    print("请在 GitHub Secrets 中设置正确的 CHAT_ID")
     exit(1)
 
+# 初始化 Bot
 try:
+    from telegram import Bot
     bot = Bot(token=BOT_TOKEN)
     # 测试 Bot 是否有效
-    bot.get_me()
+    bot_info = bot.get_me()
+    print(f"✓ Telegram Bot 连接成功: @{bot_info.username}")
 except Exception as e:
     print(f"错误: Telegram Bot 初始化失败: {e}")
+    print("可能的原因:")
+    print("1. BOT_TOKEN 格式不正确（正确格式: 1234567890:ABCdefGhIJKlmNoPQRsTUVwxyZ）")
+    print("2. BOT_TOKEN 已失效")
+    print("3. 网络连接问题")
     exit(1)
 
 BASE_URL = "https://omni-client-api.prod.ap-northeast-1.variational.io"
@@ -58,9 +89,10 @@ LOCK_FILE = "strict_step_lock.json"
 def load_lock():
     if os.path.exists(LOCK_FILE):
         try:
-            return json.load(open(LOCK_FILE))
+            with open(LOCK_FILE, 'r') as f:
+                return json.load(f)
         except json.JSONDecodeError:
-            print("警告: 锁定文件损坏，使用默认值")
+            print(f"警告: {LOCK_FILE} 文件损坏，使用默认值")
     
     # 默认值，确保包含所有必要的键
     return {
@@ -91,7 +123,7 @@ def price(sym: str) -> float:
 def send(msg: str):
     try:
         bot.send_message(chat_id=CHAT_ID, text=msg)
-        print(f"消息已发送: {msg}")
+        print(f"✓ 消息已发送: {msg[:50]}...")
     except Exception as e:
         print(f"发送消息失败: {e}")
 
@@ -138,9 +170,10 @@ def main():
                 send(f"🔔 PAXG 新低溢价 ≤{gear:.1f}！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
 
 if __name__ == "__main__":
-    print(f"=== PAXG 监控程序启动 ===")
+    print(f"\n=== PAXG 监控程序启动 ===")
     print(f"检查间隔: {CHECK_SEC}秒")
     print(f"启动时间: {dt.datetime.now():%Y-%m-%d %H:%M:%S}")
+    print(f"工作目录: {os.getcwd()}")
     
     # 首次运行发送启动消息
     if not os.path.exists(LOCK_FILE):
@@ -148,6 +181,9 @@ if __name__ == "__main__":
         send("✅ 严格阶梯锁监控已启动")
     else:
         print("检测到已有的锁定文件，不发送启动消息")
+    
+    print("开始监控...")
+    print("-" * 50)
     
     # 运行主循环
     while True:
