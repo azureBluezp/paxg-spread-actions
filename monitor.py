@@ -22,7 +22,8 @@ def price(sym: str) -> float:
 
 def send(msg: str):
     import telegram
-    telegram.Bot(token=BOT_TOKEN).send_message(chat_id=CHAT_ID, text=msg)
+    bot = telegram.Bot(token=BOT_TOKEN)
+    bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode=None)
 
 def main():
     global last_alert
