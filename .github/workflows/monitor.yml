@@ -1,8 +1,14 @@
 name: PAXG-XAUT-Spread
+
 on:
   schedule:
-  - cron: '*/5 * * * *'   # 每 5 分钟触发一次
+    - cron: '*/5 * * * *'   # 每 5 分钟触发
   workflow_dispatch:
+
+concurrency:
+  group: paxg-lock          # 全局单实例
+  cancel-in-progress: true  # 新运行先取消旧运行
+
 jobs:
   monitor:
     runs-on: ubuntu-latest
