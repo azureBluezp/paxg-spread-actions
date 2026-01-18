@@ -13,14 +13,14 @@ CHECK_SEC = int(os.getenv("CHECK_SEC", 30))
 bot = Bot(token=BOT_TOKEN)
 BASE_URL = "https://omni-client-api.prod.ap-northeast-1.variational.io"
 
-LOCK_FILE = "hour_lock.json"   # 持久化锁
+LOCK_FILE = "hour_lock.json"   # 同仓库持久化
 
 
 def load_lock():
     if os.path.exists(LOCK_FILE):
         with open(LOCK_FILE, "r") as f:
             return json.load(f)
-    return {"high": {}, "low": {}}   # 结构 {"high": {"2026-01-18-15-30.0": true}}
+    return {"high": {}, "low": {}}
 
 
 def save_lock(data):
@@ -37,7 +37,7 @@ def price(sym: str) -> float:
     for i in data["listings"]:
         if i["ticker"] == sym:
             return float(i["mark_price"])
-    raise RuntimeError(f"{sym} not found")
+    raise RuntimeError(f"{sym} not found}")
 
 
 def send(msg: str):
@@ -72,7 +72,7 @@ def main():
 
 
 if __name__ == "__main__":
-    send("✅ 文件持久化+0.5元小时档位锁监控已启动")
+    send("✅ 单实例+0.5元小时档位锁监控已启动")
     while True:
         try:
             main()
