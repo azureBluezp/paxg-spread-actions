@@ -73,7 +73,8 @@ def save_lock(data):
         json.dump(data, f, indent=2)
 
 def hour_key(gear: float) -> str:
-    return f"{dt.datetime.now():%Y-%m-%d-%H}-{gear}"
+    # 使用 gear 的两位小数精度作为键
+    return f"{dt.datetime.now():%Y-%m-%d-%H}-{gear:.2f}"
 
 def price(sym: str) -> float:
     try:
@@ -105,53 +106,92 @@ def main():
 
         # ===== 严格大于上一档 +0.5：≥16 =====
         if spread >= 16:
-            gear = round(spread * 2) / 2  # 更精确的四舍五入
+            # gear 直接使用 spread 值，不需要取整
+            gear = spread
             key = hour_key(gear)
+            
+            # 检查是否已经发送过这个档位的提醒
             if key not in lock.get("high", {}):
                 old = lock.get("high_peak", 16.0)
-                if spread > old + 0.5:
+                # 只有当价差超过之前记录的最高价差0.5才触发
+                if spread > old + 0.499:  # 使用0.499避免浮点数精度问题
                     if "high" not in lock:
                         lock["high"] = {}
                     lock["high"][key] = True
                     lock["high_peak"] = spread
                     save_lock(lock)
-                    msg = (f"🔔 PAXG 新高溢价 ≥{gear:.1f}！\n"
-                           f"PAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
+                    msg = (f"🔔 PAXG 新高溢价！\n"
+                           f"PAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}\n"
+                           f"比上一高点{old:.2f}高出{spread-old:.2f}")
                     send(msg)
 
         # ===== 严格小于上一档 -0.5：≤10 =====
         elif spread <= 10:
-            gear = round(spread * 2) / 2  # 更精确的四舍五入
+            # gear 直接使用 spread 值，不需要取整
+            gear = spread
             key = hour_key(gear)
+            
+            # 检查是否已经发送过这个档位的提醒
             if key not in lock.get("low", {}):
                 old = lock.get("low_valley", 10.0)
-                if spread < old - 0.5:
+                # 只有当价差低于之前记录的最低价差0.5才触发
+                if spread < old - 0.499:  # 使用0.499避免浮点数精度问题
                     if "low" not in lock:
                         lock["low"] = {}
                     lock["low"][key] = True
                     lock["low_valley"] = spread
                     save_lock(lock)
-                    msg = (f"🔔 PAXG 新低溢价 ≤{gear:.1f}！\n"
-                           f"PAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
+                    msg = (f"🔔 PAXG 新低溢价！\n"
+                           f"PAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}\n"
+                           f"比上一低点{old:.2f}低{old-spread:.2f}")
                     send(msg)
     except Exception as e:
         print(f"主函数错误: {e}")
 
 if __name__ == "__main__":
-    print(f"监控启动，检查间隔: {CHECK_SEC}秒")
+    print(f"=== PAXG 监控程序启动 ===")
+    print(f"检查间隔: {CHECK_SEC}秒")
+    print(f"锁定文件: {LOCK_FILE}")
+    
+    # 调试信息，检查环境变量是否正确
+    if BOT_TOKEN:
+        print(f"✓ BOT_TOKEN 已设置 (前10位: {BOT_TOKEN[:10]}...)")
+    else:
+        print("✗ BOT_TOKEN 未设置")
+        
+    if CHAT_ID:
+        print(f"✓ CHAT_ID 已设置: {CHAT_ID}")
+    else:
+        print("✗ CHAT_ID 未设置")
+    
+    # 检查锁定文件是否存在
+    lock_exists = os.path.exists(LOCK_FILE)
+    print(f"锁定文件存在: {'是' if lock_exists else '否'}")
     
     # 首次运行发送启动消息
-    if not os.path.exists(LOCK_FILE):
-        send("✅ 严格阶梯锁监控已启动")
+    if not lock_exists:
+        print("发送启动消息...")
+        try:
+            send("✅ 严格阶梯锁监控已启动")
+            print("✓ 启动消息已发送")
+        except Exception as e:
+            print(f"✗ 发送启动消息失败: {e}")
+    else:
+        print("检测到已有的锁定文件，不发送启动消息")
+    
+    print("开始监控...")
+    print("-" * 50)
     
     # 运行主循环
     while True:
         try:
             main()
         except KeyboardInterrupt:
-            print("监控已停止")
+            print("\n=== 监控程序手动停止 ===")
             break
         except Exception as e:
             print(f"循环错误: {e}")
+            # 如果出错，等待更长时间再重试
+            time.sleep(min(CHECK_SEC * 5, 300))  # 最多等待5分钟
         
         time.sleep(CHECK_SEC)
