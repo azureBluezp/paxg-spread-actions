@@ -19,7 +19,7 @@ PEAK_FILE = "peak_lock.json"   # 持久化峰值/谷值
 def load_peak():
     if os.path.exists(PEAK_FILE):
         return json.load(open(PEAK_FILE))
-    return {"high_peak": None, "low_valley": None}
+    return {"high": {}, "low": {}}
 
 
 def save_peak(data):
@@ -27,8 +27,9 @@ def save_peak(data):
         json.dump(data, f)
 
 
-def hour_key() -> str:
-    return dt.datetime.now().strftime("%Y-%m-%d-%H")
+def second_key(tag: str) -> str:
+    """秒级锁：同一秒内只报一次"""
+    return f"{dt.datetime.now():%Y-%m-%d-%H-%M-%S}-{tag}"
 
 
 def price(sym: str) -> float:
@@ -50,29 +51,30 @@ def main():
     print(f"{dt.datetime.now():%Y-%m-%d %H:%M:%S}  PAXG={paxg:.2f}  XAUT={xaut:.2f}  spread={spread:.2f}")
 
     peak = load_peak()
-    hour = hour_key()
 
-    # ===== 峰值锁：≥16 仅当 > 历史峰值 =====
+    # ===== 新高锁：≥16 同一秒内只报一次 =====
     if spread >= 16:
-        old_peak = peak.get("high_peak")
-        if old_peak is None or spread > old_peak:
+        key = second_key("high")               # 秒级键
+        if key not in peak.get("high", {}):
             peak["high_peak"] = spread
+            peak.setdefault("high", {})[key] = True
             save_peak(peak)
-            send(f"🔔 PAXG 新高溢价 ≥16！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
+            send(f"🔔 PAXG 新高溢价 ≥{spread:.1f}！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
 
-    # ===== 谷值锁：≤10 仅当 < 历史谷值 =====
+    # ===== 新低锁：≤10 同一秒内只报一次 =====
     elif spread <= 10:
-        old_valley = peak.get("low_valley")
-        if old_valley is None or spread < old_valley:
+        key = second_key("low")                # 秒级键
+        if key not in peak.get("low", {}):
             peak["low_valley"] = spread
+            peak.setdefault("low", {})[key] = True
             save_peak(peak)
-            send(f"🔔 PAXG 新低溢价 ≤10！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
+            send(f"🔔 PAXG 新低溢价 ≤{spread:.1f}！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
 
 
 if __name__ == "__main__":
     # 仅第一次部署发消息
     if not os.path.exists(PEAK_FILE):
-        send("✅ 峰值锁监控已启动")
+        send("✅ 秒级锁+实时价差监控已启动")
     main()
     while True:
         try:
