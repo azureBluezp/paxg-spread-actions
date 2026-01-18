@@ -2,12 +2,12 @@ name: PAXG-XAUT-Spread
 
 on:
   schedule:
-    - cron: '*/11 * * * *'
+    - cron: '*/11 * * * *'   # 每 11 分钟触发
   workflow_dispatch:
 
 # ===== 强制串行：同一秒只剩 1 台 runner =====
 concurrency:
-  group: ${{ github.run_id }}
+  group: ${{ github.run_id }}          # 全局单实例
   cancel-in-progress: true
 
 jobs:
