@@ -2,7 +2,7 @@ name: PAXG-XAUT-Spread-Monitor
 
 on:
   schedule:
-    - cron: '*/10 * * * *'  # ⭐ 每10分钟触发一次
+    - cron: '*/10 * * * *'  # 每10分钟触发一次
   workflow_dispatch:
 
 # 限制并发，防止重叠
@@ -13,7 +13,7 @@ concurrency:
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 35  # ⭐ 给30分钟运行 + 5分钟缓冲
+    timeout-minutes: 5  # 单次运行不超过5分钟
     
     steps:
       - name: Checkout code
@@ -34,13 +34,13 @@ jobs:
           key: paxg-spread-state-${{ github.run_id }}
           restore-keys: paxg-spread-state-
       
-      - name: Run continuous monitor
+      - name: Run silent monitor
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
-          # ⭐ 持续运行30分钟
-          timeout 1800s python monitor.py --runtime 30
+          # ⭐ 使用静默单次模式：只发送价格报警，不发送启动消息
+          timeout 120s python monitor.py --once
       
       - name: Save state
         if: always()
@@ -48,4 +48,6 @@ jobs:
           if [ -f /tmp/spread_state.pkl ]; then
             cp /tmp/spread_state.pkl ./state.pkl
             echo "✅ 状态已保存"
+          else
+            echo "⚠️ 无状态文件"
           fi
