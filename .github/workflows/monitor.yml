@@ -2,18 +2,18 @@ name: PAXG-XAUT-Spread-Monitor
 
 on:
   schedule:
-    - cron: '*/5 * * * *'  # ⭐ 每5分钟触发（整点:00, :05, :10...）
+    - cron: '*/5 * * * *'  # ⭐ 每5分钟整点触发
   workflow_dispatch:
 
-# 关键：强制排队，等待前一个完成
+# 关键：强制排队，不取消正在运行的
 concurrency:
   group: paxg-monitor
-  cancel-in-progress: false  # false = 等待前一个完成
+  cancel-in-progress: false
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 7  # ⭐ 5分钟运行 + 2分钟缓冲
+    timeout-minutes: 10  # ⭐ 给足5分钟运行 + 缓冲
     
     steps:
       - name: Checkout code
@@ -38,9 +38,9 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-          CHECK_SEC: 10  # ⭐ 10秒检查一次
+          CHECK_SEC: 10
         run: |
-          # ⭐ 持续运行5分钟（移除timeout限制）
+          # 持续运行5分钟
           python monitor.py
       
       - name: Save state
