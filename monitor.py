@@ -7,19 +7,27 @@ import logging
 import pickle
 import argparse
 import sys
-import json
 from dataclasses import dataclass, field
 from telegram import Bot
-from telegram.error import TelegramError
 from typing import Dict, Optional
 
-# ===== 强制DEBUG日志 =====
+# ===== 配置常量 =====
+CONFIG = {
+    "CHECK_SEC": int(os.getenv("CHECK_SEC", 30)),
+    "BASE_URL": "https://omni-client-api.prod.ap-northeast-1.variational.io",
+    "HIGH_THRESHOLD": 16.0,
+    "LOW_THRESHOLD": 10.0,
+    "DURATION_SEC": 1.0,
+    "GEAR_STEP": 0.5,
+}
+
+# ===== 日志配置 =====
 logging.basicConfig(
-    level=logging.DEBUG,  # <--- 强制DEBUG级别
-    format='%(asctime)s [%(levelname)s] %(funcName)s:%(lineno)d - %(message)s',
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("monitor_debug.log", encoding='utf-8')
+        logging.FileHandler("monitor.log", encoding='utf-8')
     ]
 )
 logger = logging.getLogger(__name__)
@@ -46,6 +54,7 @@ class PriceData:
 
 
 class PersistState:
+    """状态持久化类"""
     FILE_PATH = "/tmp/spread_state.pkl"
     
     @classmethod
@@ -54,10 +63,10 @@ class PersistState:
             try:
                 with open(cls.FILE_PATH, 'rb') as f:
                     data = pickle.load(f)
-                    logger.info(f"✅ 状态加载成功: {data}")
+                    logger.info(f"加载历史状态: {data}")
                     return data.get('high'), data.get('low')
             except Exception as e:
-                logger.warning(f"❌ 状态加载失败: {e}")
+                logger.warning(f"状态加载失败: {e}")
         logger.info("⚠️ 无历史状态文件")
         return None, None
     
@@ -66,9 +75,9 @@ class PersistState:
         try:
             with open(cls.FILE_PATH, 'wb') as f:
                 pickle.dump({'high': high_gear, 'low': low_gear}, f)
-                logger.info(f"✅ 状态保存成功: high={high_gear}, low={low_gear}")
+                logger.info(f"状态保存成功: high={high_gear}, low={low_gear}")
         except Exception as e:
-            logger.error(f"❌ 状态保存失败: {e}")
+            logger.error(f"状态保存失败: {e}")
 
 
 class SpreadMonitor:
@@ -79,7 +88,7 @@ class SpreadMonitor:
         logger.info(f"💬 Chat ID: {chat_id}")
         logger.info("=" * 80)
         
-        # 验证 Bot Token 和 Chat ID 格式
+        # 验证 Bot Token 格式
         if ":" not in bot_token:
             raise ValueError("Bot Token 格式错误: 必须包含 ':'")
         
@@ -204,17 +213,17 @@ class SpreadMonitor:
             state.clear_timers()
     
     def send_message(self, msg: str) -> None:
-        """发送消息（带调试日志）"""
+        """发送Telegram消息（修复版）"""
         try:
-            logger.info(f"📤 发送消息: {msg.replace('\n', ' ')}")
+            # 修复：在f-string外部处理字符串
+            clean_msg = msg.replace('\n', ' ')
+            logger.info(f"📤 发送消息: {clean_msg}")
+            
             result = self.bot.send_message(chat_id=self.chat_id, text=msg)
             logger.info(f"✅ 消息成功: {result.message_id}")
             time.sleep(2)  # 确保发送完成
-        except TelegramError as e:
-            logger.error(f"❌ Telegram错误: {e}")
-            logger.error(f"错误详情: {e.message}")
         except Exception as e:
-            logger.error(f"❌ 未知错误: {e}")
+            logger.error(f"❌ 发送失败: {e}")
     
     def run_once(self) -> None:
         """单次运行模式"""
@@ -224,13 +233,12 @@ class SpreadMonitor:
         logger.info(f"📊 状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}")
         logger.info("=" * 80)
         
-        # 发送启动消息（强制等待）
+        # 发送启动消息
         try:
             start_msg = f"✅ Actions监控启动\n高价档: {self.high_state.last_gear}\n低价档: {self.low_state.last_gear}"
-            logger.info(f"📤 正在发送启动消息...")
             self.send_message(start_msg)
             logger.info("⏳ 等待消息确认...")
-            time.sleep(5)  # <--- 强制等待5秒
+            time.sleep(3)
         except Exception as e:
             logger.error(f"❌ 启动消息失败: {e}")
         
@@ -240,7 +248,7 @@ class SpreadMonitor:
                 spreads = self.calculate_spreads()
                 if spreads:
                     gear = self.calculate_gear(spreads["mark"])
-                    logger.info(f"🎯 检测: Mark={spreads['mark']:.2f}")
+                    logger.info(f"🎯 检测: Mark={spreads['mark']:.2f} 档位={gear:.1f}")
                     
                     self.check_threshold(spreads, self.high_state, self.low_state, CONFIG["HIGH_THRESHOLD"], True)
                     self.check_threshold(spreads, self.low_state, self.high_state, CONFIG["LOW_THRESHOLD"], False)
@@ -255,7 +263,8 @@ class SpreadMonitor:
         """持续运行模式"""
         logger.info("=" * 80)
         logger.info("🚀 VPS监控启动")
-        logger.info(f"⚙️ 配置: {CONFIG}")
+        logger.info(f"⚙️ 配置: 检测间隔={CONFIG['CHECK_SEC']}秒")
+        logger.info(f"📊 状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}")
         logger.info("=" * 80)
         
         self.send_message("✅ VPS监控启动成功")
@@ -266,7 +275,7 @@ class SpreadMonitor:
                     spreads = self.calculate_spreads()
                     if spreads:
                         gear = self.calculate_gear(spreads["mark"])
-                        logger.info(f"{dt.datetime.now():%H:%M:%S} Mark={spreads['mark']:.2f}")
+                        logger.info(f"{dt.datetime.now():%H:%M:%S} Mark={spreads['mark']:.2f} 档位={gear:.1f}")
                         
                         self.check_threshold(spreads, self.high_state, self.low_state, CONFIG["HIGH_THRESHOLD"], True)
                         self.check_threshold(spreads, self.low_state, self.high_state, CONFIG["LOW_THRESHOLD"], False)
