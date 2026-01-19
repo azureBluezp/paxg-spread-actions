@@ -5,12 +5,15 @@ import time
 import datetime as dt
 import requests
 import logging
+import logging.handlers
+import signal
 import pickle
 from dataclasses import dataclass, field
 from telegram import Bot
 from typing import Dict, Optional
 
-# ===== 配置常量 =====
+# ===== 配置常量（生产环境路径）=====
+BASE_DIR = "/opt/paxg-monitor"
 CONFIG = {
     "CHECK_SEC": int(os.getenv("CHECK_SEC", 30)),
     "BASE_URL": "https://omni-client-api.prod.ap-northeast-1.variational.io",
@@ -20,13 +23,21 @@ CONFIG = {
     "GEAR_STEP": 0.5,
 }
 
-# ===== 日志配置 =====
+# ===== 生产环境日志配置 =====
+LOG_DIR = "/var/log/paxg-monitor"
+os.makedirs(LOG_DIR, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("monitor.log", encoding='utf-8')
+        logging.handlers.RotatingFileHandler(
+            f"{LOG_DIR}/monitor.log",
+            maxBytes=50*1024*1024,  # 50MB
+            backupCount=5,
+            encoding='utf-8'
+        )
     ]
 )
 logger = logging.getLogger(__name__)
@@ -34,7 +45,6 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SpreadState:
-    """状态管理类，支持持久化"""
     timers: Dict[float, float] = field(default_factory=dict)
     peak: float = 0.0
     last_gear: Optional[float] = None
@@ -54,12 +64,11 @@ class PriceData:
 
 
 class PersistState:
-    """状态持久化管理"""
-    FILE_PATH = "/tmp/spread_state.pkl"
+    """状态持久化（生产环境路径）"""
+    FILE_PATH = f"{BASE_DIR}/state.pkl"
     
     @classmethod
     def load(cls) -> tuple[Optional[float], Optional[float]]:
-        """从磁盘加载档位记忆"""
         if os.path.exists(cls.FILE_PATH):
             try:
                 with open(cls.FILE_PATH, 'rb') as f:
@@ -72,11 +81,10 @@ class PersistState:
     
     @classmethod
     def save(cls, high_gear: Optional[float], low_gear: Optional[float]) -> None:
-        """保存档位记忆到磁盘"""
         try:
             with open(cls.FILE_PATH, 'wb') as f:
                 pickle.dump({'high': high_gear, 'low': low_gear}, f)
-                logger.debug(f"状态已保存: high={high_gear}, low={low_gear}")
+                logger.debug("状态已保存")
         except Exception as e:
             logger.error(f"状态保存失败: {e}")
 
@@ -88,18 +96,25 @@ class SpreadMonitor:
         self.cache = PriceData()
         self.high_state = SpreadState(peak=CONFIG["HIGH_THRESHOLD"])
         self.low_state = SpreadState(peak=CONFIG["LOW_THRESHOLD"])
+        self.running = True
         
-        # 启动时加载历史状态
+        # 信号处理（优雅退出）
+        signal.signal(signal.SIGTERM, self._handle_exit)
+        signal.signal(signal.SIGINT, self._handle_exit)
+        
         self._load_persistent_state()
     
+    def _handle_exit(self, signum, frame):
+        """优雅退出"""
+        logger.info(f"收到信号 {signum}，正在关闭...")
+        self.running = False
+    
     def _load_persistent_state(self):
-        """加载持久化的档位记忆"""
         high_gear, low_gear = PersistState.load()
         self.high_state.last_gear = high_gear
         self.low_state.last_gear = low_gear
     
     def _save_persistent_state(self):
-        """保存当前档位记忆"""
         PersistState.save(self.high_state.last_gear, self.low_state.last_gear)
     
     def get_both_assets(self) -> bool:
@@ -170,7 +185,6 @@ class SpreadMonitor:
         
         current_gear = self.calculate_gear(mark_spread)
         
-        # 档位步进检查
         if is_high:
             step_check = current_gear >= (state.last_gear or -999) + CONFIG["GEAR_STEP"]
         else:
@@ -179,18 +193,15 @@ class SpreadMonitor:
         if not step_check:
             return
         
-        # 启动计时器
         if current_gear not in state.timers:
             state.timers[current_gear] = time.time()
             logger.info(f"  档位 {current_gear:.1f} 开始计时")
         
-        # 1秒持续确认
         if time.time() - state.timers[current_gear] >= CONFIG["DURATION_SEC"]:
             state.peak = mark_spread
             state.last_gear = current_gear
-            opposite_state.last_gear = None  # 重置对方档位记忆
+            opposite_state.last_gear = None
             
-            # 立即保存状态
             self._save_persistent_state()
             
             action = "做空PAXG@市价，做多XAUT@市价" if is_high else "做多PAXG@市价，做空XAUT@市价"
@@ -212,10 +223,11 @@ class SpreadMonitor:
             logger.error(f"Telegram发送失败: {e}")
     
     def run(self) -> None:
+        """主循环（带退出控制）"""
         logger.info("监控服务启动")
-        self.send_message("✅ 循环监控已启动 (持久化+进程锁)")
+        self.send_message("✅ VPS长期监控已启动")
         
-        while True:
+        while self.running:
             try:
                 if self.get_both_assets():
                     spreads = self.calculate_spreads()
@@ -236,6 +248,8 @@ class SpreadMonitor:
                 logger.exception(f"主循环异常: {e}")
             
             time.sleep(CONFIG["CHECK_SEC"])
+        
+        logger.info("监控服务已停止")
 
 
 def validate_config() -> bool:
@@ -253,27 +267,7 @@ def validate_config() -> bool:
     return True
 
 
-def check_duplicate() -> None:
-    """进程锁检查"""
-    pid_file = "/tmp/spread_monitor.pid"
-    
-    if os.path.exists(pid_file):
-        try:
-            with open(pid_file) as f:
-                old_pid = f.read().strip()
-            if old_pid and os.path.exists(f"/proc/{old_pid}"):
-                logger.error(f"监控进程已在运行 (PID: {old_pid})")
-                sys.exit(1)
-        except (IOError, OSError):
-            pass
-    
-    with open(pid_file, "w") as f:
-        f.write(str(os.getpid()))
-
-
 if __name__ == "__main__":
-    check_duplicate()
-    
     if not validate_config():
         exit(1)
     
