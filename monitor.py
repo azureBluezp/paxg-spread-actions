@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import os
+from dotenv import load_dotenv  # ← 添加这行
+
+load_dotenv()  # ← 添加这行（加载.env文件）
+
 import os
 import time
-import datetime as dt
-import requests
+import json
 import logging
-import pickle
-import argparse
-import sys
-from dataclasses import dataclass, field
+from datetime import datetime
 from telegram import Bot
 from typing import Dict, Optional
 
