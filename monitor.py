@@ -14,6 +14,7 @@ import logging
 from datetime import datetime
 from telegram import Bot
 from typing import Dict, Optional
+from dataclasses import dataclass
 
 # ===== 配置常量 =====
 CONFIG = {
