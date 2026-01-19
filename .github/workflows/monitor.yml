@@ -1,10 +1,9 @@
 name: PAXG-XAUT-Spread-Monitor
 
-# 关键：确保 schedule 和 workflow_dispatch 都在 on: 下面
 on:
   schedule:
     - cron: '*/5 * * * *'  # 每5分钟运行一次
-  workflow_dispatch:       # 手动触发
+  workflow_dispatch:
 
 jobs:
   monitor:
@@ -20,10 +19,8 @@ jobs:
           python-version: '3.9'
       
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
       
-      # 关键：恢复之前的状态
       - name: Restore state cache
         uses: actions/cache@v3
         with:
@@ -38,10 +35,6 @@ jobs:
           CHAT_ID: ${{ secrets.CHAT_ID }}
           CHECK_SEC: 30
         run: |
-          # 确保状态文件目录存在
-          mkdir -p /tmp
-          
-          # 运行单次模式并等待完成
           timeout 90s python monitor.py --once
       
       - name: Save state for next run
@@ -49,10 +42,6 @@ jobs:
         run: |
           if [ -f /tmp/spread_state.pkl ]; then
             cp /tmp/spread_state.pkl ./state.pkl
-            echo "✅ 状态文件已保存"
-            ls -lh state.pkl
-          else
-            echo "⚠️ 状态文件不存在，可能首次运行"
           fi
       
       - name: Upload state artifact
@@ -61,5 +50,5 @@ jobs:
         with:
           name: monitor-state-${{ github.run_id }}-${{ github.run_attempt }}
           path: state.pkl
-          retention-days: 7
+          retention-days: 1  # 改为1天，匹配仓库限制
           if-no-files-found: ignore
