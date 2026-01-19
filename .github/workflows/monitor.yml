@@ -1,76 +1,39 @@
-name: PAXG-XAUT-Spread-Monitor
+name: PAXG Spread Monitor
 
-# 添加 push 触发器用于强制激活
 on:
-  push:
-    branches:
-      - main
   schedule:
-    - cron: '*/1 * * * *'  # ⭐ 每分钟触发（最大频率）
-  workflow_dispatch:
-
-# 关键：移除 concurrency，允许每分钟并行启动
-# concurrency:
-#   group: paxg-monitor
-#   cancel-in-progress: false
+    # 每10分钟运行一次
+    - cron: '*/10 * * * *'
+  workflow_dispatch:  # 允许手动触发
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 2  # ⭐ 给50秒运行 + 70秒缓冲
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.9'
+          python-version: '3.10'
       
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
       
-      - name: Restore state cache
-        uses: actions/cache@v3
-        with:
-          path: /tmp/spread_state.pkl
-          key: paxg-spread-state-${{ github.run_id }}
-          restore-keys: paxg-spread-state-
-      
-      - name: Run quick monitor with buffer
+      - name: Run monitor
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-          CHECK_SEC: 10  # 10秒检查一次
+          PAXG_CONTRACT: "0x45804880De22913dAFE09f4980848ECE6EcbAf78"
         run: |
-          # ⭐ 运行最多60秒（5次检查 × 10秒 + 缓冲）
-          # true 防止 timeout 导致 workflow 失败
-          timeout 55s python monitor.py --once || true
+          python monitor.py
       
-      - name: Save state
+      - name: Upload logs
         if: always()
-        run: |
-          if [ -f /tmp/spread_state.pkl ]; then
-            cp /tmp/spread_state.pkl ./state.pkl
-            echo "✅ 状态已保存"
-          else
-            echo "⚠️ 无状态文件"
-          fi
-      
-      - name: Debug Actions status
-        if: always()
-        run: |
-          echo "========== Actions 状态 =========="
-          echo "当前时间: $(date)"
-          echo "仓库: $GITHUB_REPOSITORY"
-          echo "触发事件: $GITHUB_EVENT_NAME"
-          echo "Actions 启用状态:"
-          gh api repos/$GITHUB_REPOSITORY/actions/permissions --jq '.enabled' || echo "无法获取状态"
-          echo "最近5次运行:"
-          gh run list --workflow=$GITHUB_WORKFLOW --limit=5 || echo "无运行记录"
-          echo "定时器 cron: */1 * * * *"
-          echo "下一个触发时间: $(date -d '+1 minutes' '+%H:%M:%S')"
-          echo "==================================="
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: monitor-logs
+          path: monitor.log
