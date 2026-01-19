@@ -9,7 +9,7 @@ import logging
 import argparse
 import datetime as dt
 import pickle
-import requests
+import cloudscraper
 from datetime import datetime
 from telegram import Bot
 from typing import Dict, Optional
@@ -103,6 +103,9 @@ class SpreadMonitor:
         self.high_state = SpreadState(peak=CONFIG["HIGH_THRESHOLD"])
         self.low_state = SpreadState(peak=CONFIG["LOW_THRESHOLD"])
         
+        # 创建 cloudscraper 实例以更可靠地绕过 Cloudflare
+        self.scraper = cloudscraper.create_scraper()
+        
         self._load_persistent_state()
     
     def _load_persistent_state(self):
@@ -118,7 +121,7 @@ class SpreadMonitor:
         
         try:
             logger.debug("🌐 请求API...")
-            resp = requests.get(
+            resp = self.scraper.get(
                 f"{CONFIG['BASE_URL']}/metadata/stats",
                 timeout=10
             )
@@ -220,8 +223,12 @@ class SpreadMonitor:
         
         return False
     
+    def _save_persistent_state(self):
+        """保存档位状态到文件"""
+        PersistState.save(self.high_state.last_gear, self.low_state.last_gear)
+    
     def send_message(self, msg: str) -> None:
-        """发送Telegram消息（修复f-string错误）"""
+        """发送Telegram消息"""
         try:
             clean_msg = msg.replace('\n', ' ')
             logger.info(f"📤 发送消息: {clean_msg}")
@@ -286,7 +293,7 @@ if __name__ == "__main__":
     parser.add_argument("--once", action="store_true", help="单次运行模式（默认）")
     args = parser.parse_args()
     
-    logger.info(f"🎯 运行模式: 快速检测")
+    logger.info("🎯 运行模式: 快速检测")
     
     if not validate_config():
         logger.error("❌ 配置验证失败，退出")
@@ -298,7 +305,7 @@ if __name__ == "__main__":
     )
     
     try:
-        monitor.run()  # 默认运行单次快速检测
+        monitor.run()
     except Exception as e:
         logger.exception(f"❌ 致命错误: {e}")
         exit(1)
