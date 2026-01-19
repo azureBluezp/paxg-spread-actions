@@ -1,20 +1,23 @@
 name: PAXG-XAUT-Spread-Monitor
 
+# 添加 push 触发器用于强制激活
 on:
   push:
     branches:
       - main
   schedule:
-    - cron: '*/1 * * * *'  # 每分钟触发
+    - cron: '*/1 * * * *'  # ⭐ 每分钟触发（最大频率）
   workflow_dispatch:
 
-# 完全移除 concurrency 限制，确保每分钟都能启动
-# concurrency 是导致任务被取消的常见原因
+# 关键：移除 concurrency，允许每分钟并行启动
+# concurrency:
+#   group: paxg-monitor
+#   cancel-in-progress: false
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 2  # ⭐ 增加到2分钟，给50秒运行 + 70秒缓冲
+    timeout-minutes: 2  # ⭐ 给50秒运行 + 70秒缓冲
     
     steps:
       - name: Checkout code
@@ -39,10 +42,11 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-          CHECK_SEC: 10
+          CHECK_SEC: 10  # 10秒检查一次
         run: |
-          # 运行最多60秒（5次检查 × 10秒 + 缓冲）
-          timeout 60s python monitor.py --once || true  # true 防止 timeout 导致失败
+          # ⭐ 运行最多60秒（5次检查 × 10秒 + 缓冲）
+          # true 防止 timeout 导致 workflow 失败
+          timeout 55s python monitor.py --once || true
       
       - name: Save state
         if: always()
@@ -54,15 +58,19 @@ jobs:
             echo "⚠️ 无状态文件"
           fi
       
-      - name: Debug info
+      - name: Debug Actions status
         if: always()
         run: |
-          echo "========== Debug Info =========="
-          echo "Workflow started at: $(date)"
-          echo "Python version: $(python --version)"
-          echo "GitHub Event: $GITHUB_EVENT_NAME"
-          echo "Recent runs:"
-          gh run list --workflow=monitor.yml --limit=3 || echo "No gh CLI"
-          echo "================================"
+          echo "========== Actions 状态 =========="
+          echo "当前时间: $(date)"
+          echo "仓库: $GITHUB_REPOSITORY"
+          echo "触发事件: $GITHUB_EVENT_NAME"
+          echo "Actions 启用状态:"
+          gh api repos/$GITHUB_REPOSITORY/actions/permissions --jq '.enabled' || echo "无法获取状态"
+          echo "最近5次运行:"
+          gh run list --workflow=$GITHUB_WORKFLOW --limit=5 || echo "无运行记录"
+          echo "定时器 cron: */1 * * * *"
+          echo "下一个触发时间: $(date -d '+1 minutes' '+%H:%M:%S')"
+          echo "==================================="
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
