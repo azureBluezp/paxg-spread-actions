@@ -223,8 +223,55 @@ class SpreadMonitor:
         except Exception as e:
             logger.error(f"❌ 发送失败: {e}")
     
+    def run_continuous(self, minutes: int = 30):
+        """持续运行模式（新增）"""
+        logger.info("=" * 80)
+        logger.info(f"🚀 持续监控启动: 运行 {minutes} 分钟")
+        logger.info(f"⏰ 开始时间: {dt.datetime.now()}")
+        logger.info(f"📊 初始状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}")
+        logger.info("=" * 80)
+        
+        # 发送启动消息
+        try:
+            start_msg = f"✅ 持续监控启动\n运行时长: {minutes}分钟\n高价档: {self.high_state.last_gear}\n低价档: {self.low_state.last_gear}"
+            self.send_message(start_msg)
+        except Exception as e:
+            logger.error(f"❌ 启动消息失败: {e}")
+        
+        # 持续运行指定时间
+        start_time = time.time()
+        max_runtime = minutes * 60
+        
+        while time.time() - start_time < max_runtime:
+            try:
+                if self.get_both_assets():
+                    spreads = self.calculate_spreads()
+                    if spreads:
+                        gear = self.calculate_gear(spreads["mark"])
+                        logger.info(f"{dt.datetime.now():%H:%M:%S} Mark={spreads['mark']:.2f} 档位={gear:.1f}")
+                        
+                        self.check_threshold(spreads, self.high_state, self.low_state, CONFIG["HIGH_THRESHOLD"], True)
+                        self.check_threshold(spreads, self.low_state, self.high_state, CONFIG["LOW_THRESHOLD"], False)
+                
+            except Exception as e:
+                logger.exception(f"❌ 主循环异常: {e}")
+            
+            time.sleep(CONFIG["CHECK_SEC"])
+        
+        logger.info("=" * 80)
+        logger.info(f"⏰ 运行结束: {dt.datetime.now()}")
+        logger.info("=" * 80)
+        
+        # 发送结束消息
+        try:
+            end_msg = f"✅ 持续监控结束\n运行时长: {minutes}分钟\n最终高价档: {self.high_state.last_gear}\n最终低价档: {self.low_state.last_gear}"
+            self.send_message(end_msg)
+            time.sleep(3)
+        except Exception as e:
+            logger.error(f"❌ 结束消息失败: {e}")
+    
     def run_once(self) -> None:
-        """单次运行模式"""
+        """单次运行模式（保留）"""
         logger.info("=" * 80)
         logger.info("🚀 单次运行模式启动")
         logger.info(f"⏰ 时间: {dt.datetime.now()}")
@@ -258,30 +305,8 @@ class SpreadMonitor:
         logger.info("✅ 单次运行结束")
     
     def run(self) -> None:
-        """持续运行模式"""
-        logger.info("=" * 80)
-        logger.info("🚀 VPS监控启动")
-        logger.info(f"⚙️ 配置: 检测间隔={CONFIG['CHECK_SEC']}秒")
-        logger.info(f"📊 状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}")
-        logger.info("=" * 80)
-        
-        self.send_message("✅ VPS监控启动成功")
-        
-        while True:
-            try:
-                if self.get_both_assets():
-                    spreads = self.calculate_spreads()
-                    if spreads:
-                        gear = self.calculate_gear(spreads["mark"])
-                        logger.info(f"{dt.datetime.now():%H:%M:%S} Mark={spreads['mark']:.2f} 档位={gear:.1f}")
-                        
-                        self.check_threshold(spreads, self.high_state, self.low_state, CONFIG["HIGH_THRESHOLD"], True)
-                        self.check_threshold(spreads, self.low_state, self.high_state, CONFIG["LOW_THRESHOLD"], False)
-                
-            except Exception as e:
-                logger.exception(f"❌ 主循环异常: {e}")
-            
-            time.sleep(CONFIG["CHECK_SEC"])
+        """默认持续运行"""
+        self.run_continuous(minutes=30)
 
 
 def validate_config() -> bool:
@@ -305,10 +330,11 @@ def validate_config() -> bool:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--once", action="store_true", help="GitHub Actions单次模式")
+    parser.add_argument("--once", action="store_true", help="单次运行模式")
+    parser.add_argument("--runtime", type=int, default=30, help="持续运行分钟数（默认30）")
     args = parser.parse_args()
     
-    logger.info(f"🎯 运行模式: {'单次' if args.once else '持续'}")
+    logger.info(f"🎯 运行模式: {'单次' if args.once else f'持续{args.runtime}分钟'}")
     
     if not validate_config():
         logger.error("❌ 配置验证失败，退出")
@@ -322,8 +348,10 @@ if __name__ == "__main__":
     try:
         if args.once:
             monitor.run_once()
+        elif args.runtime > 0:
+            monitor.run_continuous(minutes=args.runtime)
         else:
-            monitor.run()
+            monitor.run()  # 无限运行
     except Exception as e:
         logger.exception(f"❌ 致命错误: {e}")
         exit(1)
