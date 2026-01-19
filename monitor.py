@@ -164,4 +164,155 @@ class SpreadMonitor:
     
     @staticmethod
     def calculate_gear(value: float) -> float:
-        return
+        return int(value * 2) / 2
+    
+    def check_threshold(
+        self, 
+        spreads: dict,
+        state: SpreadState,
+        opposite_state: SpreadState,
+        threshold: float,
+        is_high: bool
+    ) -> bool:
+        mark_spread = spreads["mark"]
+        directional_spread = spreads["short" if is_high else "long"]
+        
+        condition = mark_spread >= threshold if is_high else mark_spread <= threshold
+        
+        if not condition:
+            if state.timers:
+                state.clear_timers()
+                logger.info(f"  清除{'≥16' if is_high else '≤10'}计时器")
+            return False
+        
+        current_gear = self.calculate_gear(mark_spread)
+        
+        if is_high:
+            step_check = current_gear >= (state.last_gear or -999) + CONFIG["GEAR_STEP"]
+        else:
+            step_check = current_gear <= (state.last_gear or 999) - CONFIG["GEAR_STEP"]
+        
+        if not step_check:
+            return False
+        
+        if current_gear not in state.timers:
+            state.timers[current_gear] = time.time()
+            logger.info(f"  档位 {current_gear:.1f} 开始计时")
+        
+        if time.time() - state.timers[current_gear] >= CONFIG["DURATION_SEC"]:
+            state.peak = mark_spread
+            state.last_gear = current_gear
+            opposite_state.last_gear = None
+            
+            self._save_persistent_state()
+            
+            action = "做空PAXG@市价，做多XAUT@市价" if is_high else "做多PAXG@市价，做空XAUT@市价"
+            msg = (
+                f"🔔 PAXG {'新高' if is_high else '新低'}溢价 {'≥16' if is_high else '≤10'}！\n"
+                f"真实成交价差: {directional_spread:.2f}\n"
+                f"（{action}）\n"
+                f"Mark参考: {mark_spread:.2f}"
+            )
+            
+            self.send_message(msg)
+            logger.info(f"  ✅ 价格报警发送: 档位 {current_gear:.1f}")
+            state.clear_timers()
+            return True
+        
+        return False
+    
+    def _save_persistent_state(self):
+        """保存档位状态到文件"""
+        PersistState.save(self.high_state.last_gear, self.low_state.last_gear)
+    
+    def send_message(self, msg: str) -> None:
+        """发送Telegram消息"""
+        try:
+            clean_msg = msg.replace('\n', ' ')
+            logger.info(f"📤 发送消息: {clean_msg}")
+            
+            result = self.bot.send_message(chat_id=self.chat_id, text=msg)
+            logger.info(f"✅ 消息成功: {result.message_id}")
+            time.sleep(2)
+        except Exception as e:
+            logger.error(f"❌ 发送失败: {e}")
+    
+    def run_continuous(self):
+        """24/7 不间断监控"""
+        logger.info("=" * 80)
+        logger.info("🚀 24/7 持续监控模式启动")
+        logger.info("按 Ctrl+C 停止")
+        logger.info("=" * 80)
+        
+        check_count = 0
+        error_count = 0
+        
+        while True:
+            try:
+                if self.get_both_assets():
+                    error_count = 0
+                    spreads = self.calculate_spreads()
+                    if spreads:
+                        check_count += 1
+                        gear = self.calculate_gear(spreads["mark"])
+                        
+                        # 每10次检查打印一次日志（减少日志量）
+                        if check_count % 10 == 0:
+                            logger.info(f"🎯 检查 #{check_count}: Mark={spreads['mark']:.2f} 档位={gear:.1f}")
+                        
+                        self.check_threshold(spreads, self.high_state, self.low_state, CONFIG["HIGH_THRESHOLD"], True)
+                        self.check_threshold(spreads, self.low_state, self.high_state, CONFIG["LOW_THRESHOLD"], False)
+                else:
+                    error_count += 1
+                    if error_count >= 5:
+                        logger.warning(f"⚠️ 连续 {error_count} 次获取数据失败")
+                        time.sleep(30)
+                    
+            except Exception as e:
+                logger.exception(f"❌ 监控循环错误: {e}")
+                time.sleep(30)
+            
+            time.sleep(CONFIG["CHECK_SEC"])
+    
+    def run(self):
+        self.run_continuous()
+
+
+def validate_config() -> bool:
+    logger.info("🔍 验证配置...")
+    required = ["BOT_TOKEN", "CHAT_ID"]
+    for var in required:
+        value = os.getenv(var)
+        if not value:
+            logger.error(f"❌ 缺少 {var}")
+            return False
+        logger.info(f"✅ {var}: {value[:10]}...")
+    
+    token = os.getenv("BOT_TOKEN")
+    if ":" not in token:
+        logger.error("❌ BOT_TOKEN格式错误")
+        return False
+    
+    logger.info("✅ 配置验证通过")
+    return True
+
+
+if __name__ == "__main__":
+    if not validate_config():
+        logger.error("❌ 配置验证失败，退出")
+        exit(1)
+    
+    logger.info("🎯 运行模式: 24/7 不间断监控")
+    
+    monitor = SpreadMonitor(
+        bot_token=os.getenv("BOT_TOKEN"),
+        chat_id=os.getenv("CHAT_ID")
+    )
+    
+    try:
+        monitor.run()
+    except KeyboardInterrupt:
+        logger.info("✅ 用户手动停止监控")
+    except Exception as e:
+        logger.exception(f"❌ 致命错误: {e}")
+        exit(1)
