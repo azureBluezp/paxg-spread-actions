@@ -1,9 +1,8 @@
 name: PAXG-XAUT-Spread-Monitor
 
-# 关键：确保 schedule 在 on: 下面
 on:
   schedule:
-    - cron: '*/5 * * * *'  # 每5分钟
+    - cron: '*/5 * * * *'  # 每5分钟运行一次
   workflow_dispatch:  # 手动触发
 
 jobs:
@@ -20,18 +19,7 @@ jobs:
           python-version: '3.9'
       
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-      
-      - name: Check environment variables
-        run: |
-          echo "检查环境变量..."
-          if [ -z "${BOT_TOKEN}" ]; then echo "❌ BOT_TOKEN 未设置"; exit 1; fi
-          if [ -z "${CHAT_ID}" ]; then echo "❌ CHAT_ID 未设置"; exit 1; fi
-          echo "✅ 环境变量已设置"
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: pip install -r requirements.txt
       
       - name: Restore state cache
         uses: actions/cache@v3
@@ -41,38 +29,24 @@ jobs:
           restore-keys: |
             paxg-spread-state-
       
-      - name: Run monitor with debug
+      - name: Run monitor (single check)
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
-          echo "开始运行监控..."
           timeout 120s python monitor.py --once
-          echo "运行完成"
       
       - name: Save state
         if: always()
         run: |
           if [ -f /tmp/spread_state.pkl ]; then
             cp /tmp/spread_state.pkl ./state.pkl
-            echo "✅ State saved"
-          else
-            echo "⚠️ No state file"
           fi
       
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: debug-logs-${{ github.run_id }}
-          path: monitor_debug.log
+          name: monitor-logs-${{ github.run_id }}
+          path: monitor.log
           retention-days: 1
-      
-      - name: Debug info
-        if: always()
-        run: |
-          echo "=== Debug Info ==="
-          echo "Run ID: ${{ github.run_id }}"
-          echo "Event: ${{ github.event_name }}"
-          echo "Status: ${{ job.status }}"
-          echo "=== End ==="
