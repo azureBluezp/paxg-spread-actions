@@ -2,7 +2,7 @@ name: PAXG-XAUT-Spread-Monitor
 
 on:
   schedule:
-    - cron: '*/5 * * * *'  # 每5分钟运行一次
+    - cron: '*/5 * * * *'  # 每5分钟运行一次（根据需求调整）
   workflow_dispatch:
 
 jobs:
@@ -22,8 +22,9 @@ jobs:
         run: |
           pip install -r requirements.txt
       
-      # 关键：恢复之前的状态
+      # 关键步骤：恢复之前的状态
       - name: Restore state cache
+        id: cache-state
         uses: actions/cache@v3
         with:
           path: /tmp/spread_state.pkl
@@ -38,20 +39,22 @@ jobs:
           CHECK_SEC: 30
         run: |
           # 运行单次模式并确保消息发送完成
-          timeout 30s python monitor.py --once || true
+          timeout 60s python monitor.py --once || true
       
-      # 关键：保存当前状态
+      # 保存状态到 workspace
       - name: Save state for next run
         if: always()
         run: |
           if [ -f /tmp/spread_state.pkl ]; then
-            cp /tmp/spread_state.pkl ./ || true
+            cp /tmp/spread_state.pkl ./state.pkl || true
           fi
       
+      # ⭐ 修复：升级到 v4，使用唯一名称
       - name: Upload state artifact
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: monitor-state
-          path: spread_state.pkl
+          name: monitor-state-${{ github.run_id }}-${{ github.run_attempt }}
+          path: state.pkl
           retention-days: 7
+          if-no-files-found: ignore
