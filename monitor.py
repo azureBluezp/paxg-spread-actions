@@ -2,21 +2,22 @@
 # -*- coding: utf-8 -*-
 
 import os
-from dotenv import load_dotenv  # ← 添加这行
-
-load_dotenv()  # ← 添加这行（加载.env文件）
-
-import os
+import sys
 import time
 import json
-import sys
 import logging
 import argparse
 import datetime as dt
+import pickle
+import requests
 from datetime import datetime
 from telegram import Bot
 from typing import Dict, Optional
-from dataclasses import dataclass, field  # 修复：添加 field
+from dataclasses import dataclass, field
+
+# 加载 .env 文件
+from dotenv import load_dotenv
+load_dotenv()
 
 # ===== 配置常量 =====
 CONFIG = {
@@ -65,7 +66,7 @@ class PersistState:
     FILE_PATH = "/tmp/spread_state.pkl"
     
     @classmethod
-    def load(cls) -> tuple[Optional[float], Optional[float]]:
+    def load(cls) -> tuple:
         if os.path.exists(cls.FILE_PATH):
             try:
                 with open(cls.FILE_PATH, 'rb') as f:
