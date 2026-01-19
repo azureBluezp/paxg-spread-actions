@@ -3,76 +3,51 @@ import os
 import time
 import datetime as dt
 import requests
-import json
 from telegram import Bot
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID   = os.getenv("CHAT_ID")
-CHECK_SEC = int(os.getenv("CHECK_SEC", 30))   # ← 彻底无引号
+CHECK_SEC = int(os.getenv("CHECK_SEC", 30))
 
 bot = Bot(token=BOT_TOKEN)
 BASE_URL = "https://omni-client-api.prod.ap-northeast-1.variational.io"
 
-LOCK_FILE = "strict_step_lock.json"
-
-def load_lock():
-    if os.path.exists(LOCK_FILE):
-        return json.load(open(LOCK_FILE))
-    return {"high_peak": 16.0, "low_valley": 10.0}   # ← 已去掉多余 }
-
-def save_lock(data):
-    with open(LOCK_FILE, "w") as f:
-        json.dump(data, f)
-
-def hour_key(gear: float) -> str:
-    return f"{dt.datetime.now():%Y-%m-%d-%H}-{gear}"
+# ===== 内存锁（仅当前 runner 有效）=====
+high_peak = 16.0
+low_valley = 10.0
+last_high_key = ""
+last_low_key = ""
 
 def price(sym: str) -> float:
     data = requests.get(f"{BASE_URL}/metadata/stats", timeout=10).json()
     for i in data["listings"]:
         if i["ticker"] == sym:
             return float(i["mark_price"])
-    raise RuntimeError(f"{sym} not found")   # ← 已去掉多余 }
+    raise RuntimeError(f"{sym} not found")
 
 def send(msg: str):
     bot.send_message(chat_id=CHAT_ID, text=msg)
 
 def main():
+    global high_peak, low_valley, last_high_key, last_low_key
+    
     paxg = price("PAXG")
     xaut = price("XAUT")
     spread = paxg - xaut
     print(f"{dt.datetime.now():%Y-%m-%d %H:%M:%S}  PAXG={paxg:.2f}  XAUT={xaut:.2f}  spread={spread:.2f}")
 
-    lock = load_lock()
+    # ===== 新高：> 上一档 +0.5 =====
+    if spread >= 16 and spread > high_peak + 0.5:
+        high_peak = spread
+        send(f"🔔 PAXG 新高溢价！\n价差={spread:.2f} (前高+{spread-high_peak:.2f})")
 
-    # ===== 严格大于上一档 +0.5：≥16 =====
-    if spread >= 16:
-        gear = int(spread * 2) / 2
-        key = hour_key(gear)
-        if key not in lock.get("high", {}):
-            old = lock.get("high_peak", 16.0)
-            if spread > old + 0.5:
-                lock.setdefault("high", {})[key] = True
-                lock["high_peak"] = spread
-                save_lock(lock)
-                send(f"🔔 PAXG 新高溢价 ≥{gear:.1f}！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
-
-    # ===== 严格小于上一档 -0.5：≤10 =====
-    elif spread <= 10:
-        gear = int(spread * 2) / 2
-        key = hour_key(gear)
-        if key not in lock.get("low", {}):
-            old = lock.get("low_valley", 10.0)
-            if spread < old - 0.5:
-                lock.setdefault("low", {})[key] = True
-                lock["low_valley"] = spread
-                save_lock(lock)
-                send(f"🔔 PAXG 新低溢价 ≤{gear:.1f}！\nPAXG={paxg:.2f}  XAUT={xaut:.2f}  价差={spread:.2f}")
+    # ===== 新低：< 上一档 -0.5 =====
+    elif spread <= 10 and spread < low_valley - 0.5:
+        low_valley = spread
+        send(f"🔔 PAXG 新低溢价！\n价差={spread:.2f} (前低-{low_valley-spread:.2f})")
 
 if __name__ == "__main__":
-    if not os.path.exists(LOCK_FILE):
-        send("✅ 严格阶梯锁监控已启动")
-    main()
+    send("✅ 监控已启动")
     while True:
         try:
             main()
