@@ -11,8 +11,9 @@ from dataclasses import dataclass, field
 from telegram import Bot
 from typing import Dict, Optional
 
+# ===== 配置常量 =====
 CONFIG = {
-    "CHECK_SEC": int(os.getenv("CHECK_SEC", 10)),
+    "CHECK_SEC": int(os.getenv("CHECK_SEC", 10)),  # 10秒检查间隔
     "BASE_URL": "https://omni-client-api.prod.ap-northeast-1.variational.io",
     "HIGH_THRESHOLD": 16.0,
     "LOW_THRESHOLD": 10.0,
@@ -20,6 +21,7 @@ CONFIG = {
     "GEAR_STEP": 0.5,
 }
 
+# ===== 日志配置 =====
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
@@ -52,6 +54,7 @@ class PriceData:
 
 
 class PersistState:
+    """状态持久化类"""
     FILE_PATH = "/tmp/spread_state.pkl"
     
     @classmethod
@@ -95,6 +98,7 @@ class SpreadMonitor:
         self._load_persistent_state()
     
     def _load_persistent_state(self):
+        """加载持久化的档位记忆"""
         high_gear, low_gear = PersistState.load()
         self.high_state.last_gear = high_gear
         self.low_state.last_gear = low_gear
@@ -157,6 +161,10 @@ class SpreadMonitor:
         threshold: float,
         is_high: bool
     ) -> bool:
+        """
+        检查阈值
+        返回: bool - 是否触发了价格报警
+        """
         mark_spread = spreads["mark"]
         directional_spread = spreads["short" if is_high else "long"]
         
@@ -205,88 +213,45 @@ class SpreadMonitor:
         return False
     
     def send_message(self, msg: str) -> None:
-        clean_msg = msg.replace('\n', ' ')
-        logger.info(f"📤 发送消息: {clean_msg}")
-        
+        """发送Telegram消息（修复f-string错误）"""
         try:
+            clean_msg = msg.replace('\n', ' ')
+            logger.info(f"📤 发送消息: {clean_msg}")
+            
             result = self.bot.send_message(chat_id=self.chat_id, text=msg)
             logger.info(f"✅ 消息成功: {result.message_id}")
             time.sleep(2)
         except Exception as e:
             logger.error(f"❌ 发送失败: {e}")
     
-    def run_continuous(self, minutes: int = 5):
+    def run_once(self):
+        """单次运行 - 快速检查5次（约50秒）"""
         logger.info("=" * 80)
-        logger.info(f"🚀 持续监控启动: 运行 {minutes} 分钟")
-        logger.info(f"⏰ 开始时间: {dt.datetime.now()}")
+        logger.info("🚀 快速检测模式启动")
+        logger.info(f"⏰ 时间: {dt.datetime.now()}")
         logger.info(f"档位状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}")
         logger.info("=" * 80)
         
-        try:
-            start_msg = f"✅ 监控周期启动\n运行时长: {minutes}分钟\n档位: 高={self.high_state.last_gear} 低={self.low_state.last_gear}"
-            self.send_message(start_msg)
-        except Exception as e:
-            logger.error(f"❌ 启动消息失败: {e}")
-        
-        start_time = time.time()
-        max_runtime = minutes * 60
-        alert_count = 0
-        
-        while time.time() - start_time < max_runtime:
+        max_checks = 5
+        for i in range(max_checks):
             try:
                 if self.get_both_assets():
                     spreads = self.calculate_spreads()
                     if spreads:
                         gear = self.calculate_gear(spreads["mark"])
-                        logger.info(f"{dt.datetime.now():%H:%M:%S} Mark={spreads['mark']:.2f} 档位={gear:.1f}")
+                        logger.info(f"🎯 检测 {i+1}/{max_checks}: Mark={spreads['mark']:.2f} 档位={gear:.1f}")
                         
-                        high_triggered = self.check_threshold(
-                            spreads, self.high_state, self.low_state, 
-                            CONFIG["HIGH_THRESHOLD"], True
-                        )
-                        if high_triggered:
-                            alert_count += 1
-                        
-                        low_triggered = self.check_threshold(
-                            spreads, self.low_state, self.high_state, 
-                            CONFIG["LOW_THRESHOLD"], False
-                        )
-                        if low_triggered:
-                            alert_count += 1
-                
+                        self.check_threshold(spreads, self.high_state, self.low_state, CONFIG["HIGH_THRESHOLD"], True)
+                        self.check_threshold(spreads, self.low_state, self.high_state, CONFIG["LOW_THRESHOLD"], False)
             except Exception as e:
-                logger.exception(f"❌ 主循环异常: {e}")
+                logger.exception(f"❌ 检测失败: {e}")
             
             time.sleep(CONFIG["CHECK_SEC"])
         
-        logger.info("=" * 80)
-        logger.info(f"⏰ 运行结束: {dt.datetime.now()}")
-        logger.info(f"📊 触发价格报警次数: {alert_count}")
-        logger.info("=" * 80)
+        logger.info("✅ 快速检测完成")
     
-    def run_once(self) -> None:
-        logger.info("=" * 80)
-        logger.info("🚀 单次检测模式启动")
-        logger.info(f"⏰ 时间: {dt.datetime.now()}")
-        logger.info(f"档位状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}")
-        logger.info("=" * 80)
-        
-        try:
-            if self.get_both_assets():
-                spreads = self.calculate_spreads()
-                if spreads:
-                    gear = self.calculate_gear(spreads["mark"])
-                    logger.info(f"🎯 检测: Mark={spreads['mark']:.2f} 档位={gear:.1f}")
-                    
-                    self.check_threshold(spreads, self.high_state, self.low_state, CONFIG["HIGH_THRESHOLD"], True)
-                    self.check_threshold(spreads, self.low_state, self.high_state, CONFIG["LOW_THRESHOLD"], False)
-        except Exception as e:
-            logger.exception(f"❌ 检测失败: {e}")
-        
-        logger.info("✅ 单次检测结束")
-    
-    def run(self) -> None:
-        self.run_continuous(minutes=5)
+    def run(self):
+        self.run_once()
 
 
 def validate_config() -> bool:
@@ -310,10 +275,10 @@ def validate_config() -> bool:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--once", action="store_true", help="单次运行模式")
+    parser.add_argument("--once", action="store_true", help="单次运行模式（默认）")
     args = parser.parse_args()
     
-    logger.info(f"🎯 运行模式: {'单次' if args.once else '持续5分钟'}")
+    logger.info(f"🎯 运行模式: 快速检测")
     
     if not validate_config():
         logger.error("❌ 配置验证失败，退出")
@@ -325,10 +290,7 @@ if __name__ == "__main__":
     )
     
     try:
-        if args.once:
-            monitor.run_once()
-        else:
-            monitor.run()
+        monitor.run()  # 默认运行单次快速检测
     except Exception as e:
         logger.exception(f"❌ 致命错误: {e}")
         exit(1)
