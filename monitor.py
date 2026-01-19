@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 import os
-import sys
 import time
 import datetime as dt
 import requests
 import logging
-import pickle
 from dataclasses import dataclass, field
 from telegram import Bot
 from typing import Dict, Optional
@@ -34,7 +32,6 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SpreadState:
-    """状态管理类，支持持久化"""
     timers: Dict[float, float] = field(default_factory=dict)
     peak: float = 0.0
     last_gear: Optional[float] = None
@@ -54,12 +51,11 @@ class PriceData:
 
 
 class PersistState:
-    """状态持久化管理"""
+    """状态持久化类 - 自动创建目录"""
     FILE_PATH = "/tmp/spread_state.pkl"
     
     @classmethod
     def load(cls) -> tuple[Optional[float], Optional[float]]:
-        """从磁盘加载档位记忆"""
         if os.path.exists(cls.FILE_PATH):
             try:
                 with open(cls.FILE_PATH, 'rb') as f:
@@ -72,11 +68,10 @@ class PersistState:
     
     @classmethod
     def save(cls, high_gear: Optional[float], low_gear: Optional[float]) -> None:
-        """保存档位记忆到磁盘"""
         try:
             with open(cls.FILE_PATH, 'wb') as f:
                 pickle.dump({'high': high_gear, 'low': low_gear}, f)
-                logger.debug(f"状态已保存: high={high_gear}, low={low_gear}")
+                logger.debug("状态已保存")
         except Exception as e:
             logger.error(f"状态保存失败: {e}")
 
@@ -89,7 +84,7 @@ class SpreadMonitor:
         self.high_state = SpreadState(peak=CONFIG["HIGH_THRESHOLD"])
         self.low_state = SpreadState(peak=CONFIG["LOW_THRESHOLD"])
         
-        # 启动时加载历史状态
+        # 加载历史状态
         self._load_persistent_state()
     
     def _load_persistent_state(self):
@@ -170,7 +165,6 @@ class SpreadMonitor:
         
         current_gear = self.calculate_gear(mark_spread)
         
-        # 档位步进检查
         if is_high:
             step_check = current_gear >= (state.last_gear or -999) + CONFIG["GEAR_STEP"]
         else:
@@ -179,18 +173,15 @@ class SpreadMonitor:
         if not step_check:
             return
         
-        # 启动计时器
         if current_gear not in state.timers:
             state.timers[current_gear] = time.time()
             logger.info(f"  档位 {current_gear:.1f} 开始计时")
         
-        # 1秒持续确认
         if time.time() - state.timers[current_gear] >= CONFIG["DURATION_SEC"]:
             state.peak = mark_spread
             state.last_gear = current_gear
-            opposite_state.last_gear = None  # 重置对方档位记忆
+            opposite_state.last_gear = None
             
-            # 立即保存状态
             self._save_persistent_state()
             
             action = "做空PAXG@市价，做多XAUT@市价" if is_high else "做多PAXG@市价，做空XAUT@市价"
@@ -253,27 +244,7 @@ def validate_config() -> bool:
     return True
 
 
-def check_duplicate() -> None:
-    """进程锁检查"""
-    pid_file = "/tmp/spread_monitor.pid"
-    
-    if os.path.exists(pid_file):
-        try:
-            with open(pid_file) as f:
-                old_pid = f.read().strip()
-            if old_pid and os.path.exists(f"/proc/{old_pid}"):
-                logger.error(f"监控进程已在运行 (PID: {old_pid})")
-                sys.exit(1)
-        except (IOError, OSError):
-            pass
-    
-    with open(pid_file, "w") as f:
-        f.write(str(os.getpid()))
-
-
 if __name__ == "__main__":
-    check_duplicate()
-    
     if not validate_config():
         exit(1)
     
