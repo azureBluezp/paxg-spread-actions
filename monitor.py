@@ -6,20 +6,23 @@ import requests
 from telegram import Bot
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID   = os.getenv("CHAT_ID")
+CHAT_ID = os.getenv("CHAT_ID")
 CHECK_SEC = int(os.getenv("CHECK_SEC", 30))
 
 bot = Bot(token=BOT_TOKEN)
 BASE_URL = "https://omni-client-api.prod.ap-northeast-1.variational.io"
 
-# ===== 全局状态：持续计时器 =====
-high_state = {"pending": False, "since": 0.0, "last_value": 0.0}   # ≥16计时器
-low_state  = {"pending": False, "since": 0.0, "last_value": 0.0}   # ≤10计时器
-high_peak = 16.0
-low_valley = 10.0
+# ===== 全局状态 =====
+high_timers = {}          # {gear: start_time}
+low_timers = {}
+high_peak = 16.0          # 历史最高mark价差
+low_valley = 10.0         # 历史最低mark价差
+last_high_gear = None     # 上次报警的高档位
+last_low_gear = None      # 上次报警的抵挡位
 
 
 def get_asset_data(sym: str) -> dict:
+    """获取资产数据：mark_price + bid/ask"""
     data = requests.get(f"{BASE_URL}/metadata/stats", timeout=10).json()
     for item in data["listings"]:
         if item["ticker"] == sym:
@@ -32,85 +35,97 @@ def get_asset_data(sym: str) -> dict:
 
 
 def send(msg: str):
+    """发送Telegram消息"""
     bot.send_message(chat_id=CHAT_ID, text=msg)
 
 
 def main():
-    global high_state, low_state, high_peak, low_valley
+    global high_timers, low_timers, high_peak, low_valley, last_high_gear, last_low_gear
     
+    # 获取数据
     paxg = get_asset_data("PAXG")
     xaut = get_asset_data("XAUT")
     
+    # 计算价差
     mark_spread = paxg["mark_price"] - xaut["mark_price"]
-    short_spread = paxg["bid_1k"] - xaut["ask_1k"]   # 做空PAXG
-    long_spread = paxg["ask_1k"] - xaut["bid_1k"]    # 做多PAXG
+    short_spread = paxg["bid_1k"] - xaut["ask_1k"]  # 做空PAXG的真实价差
+    long_spread = paxg["ask_1k"] - xaut["bid_1k"]   # 做多PAXG的真实价差
     
     now = time.time()
-    print(f"{dt.datetime.now():%H:%M:%S}  Mark={mark_spread:.2f}")
+    current_gear = int(mark_spread * 2) / 2  # 保留一位小数档位
+    
+    print(f"{dt.datetime.now():%H:%M:%S}  Mark={mark_spread:.2f}  档位={current_gear:.1f}")
 
-    # ===== ≥16 持续1秒确认 =====
+    # ===== ≥16 处理（核心：档位递增0.5 + 首次允许 + 持续1秒）=====
     if mark_spread >= 16:
-        # 情况1：首次突破或从阈值内重新突破
-        if not high_state["pending"] or high_state["last_value"] < 16:
-            high_state["pending"] = True
-            high_state["since"] = now
-            high_state["last_value"] = mark_spread
-            print(f"  → 开始计时 ≥16 (初始值: {mark_spread:.2f})")
+        # 清理不在当前档位的计时器
+        to_remove = [g for g in high_timers.keys() if g != current_gear]
+        for g in to_remove:
+            del high_timers[g]
+            print(f"  清除档位 {g:.1f} 计时器")
         
-        # 情况2：仍在阈值外，但价差变化了（重置计时器）
-        elif abs(mark_spread - high_state["last_value"]) > 0.1:
-            high_state["since"] = now
-            high_state["last_value"] = mark_spread
-            print(f"  → 价差变化，重置计时器 (新值: {mark_spread:.2f})")
+        # 检查是否满足档位间隔（首次或比上次报警高0.5）
+        if last_high_gear is None or current_gear >= last_high_gear + 0.5:
+            # 为当前档位启动计时器（如果不存在）
+            if current_gear not in high_timers:
+                high_timers[current_gear] = now
+                print(f"  档位 {current_gear:.1f} 开始计时")
+            
+            # 检查是否持续1秒
+            if now - high_timers[current_gear] >= 1.0:
+                # 更新峰值和上次报警档位
+                high_peak = mark_spread
+                last_high_gear = current_gear  # 关键：更新为当前档位
+                msg = (f"🔔 PAXG 新高溢价 ≥16！\n"
+                       f"档位: {current_gear:.1f}\n"
+                       f"真实成交价差: {short_spread:.2f}\n"
+                       f"持续1秒: {mark_spread:.2f}")
+                send(msg)
+                print(f"  ✅ 报警发送: 档位 {current_gear:.1f}")
+                # 报警后清除计时器，避免重复
+                del high_timers[current_gear]
+    
+    # ===== ≤10 处理（档位递减0.5）=====
+    elif mark_spread <= 10:
+        # 清理不在当前档位的计时器
+        to_remove = [g for g in low_timers.keys() if g != current_gear]
+        for g in to_remove:
+            del low_timers[g]
+            print(f"  清除档位 {g:.1f} 计时器")
         
-        # 情况3：持续≥16且时间≥1秒，且是新高
-        elif now - high_state["since"] >= 1.0 and mark_spread > high_peak + 0.5:
-            high_peak = mark_spread
-            high_state["pending"] = False   # 报警后重置
-            msg = (f"🔔 PAXG 新高溢价 ≥16！\n"
-                   f"真实成交价差: {short_spread:.2f}\n"
-                   f"持续1秒确认: {mark_spread:.2f}\n"
-                   f"（做空PAXG@市价，做多XAUT@市价）")
-            send(msg)
-            print(f"  ✅ 报警发送: {mark_spread:.2f}")
-
+        # 检查是否满足档位间隔（首次或比上次报警低0.5）
+        if last_low_gear is None or current_gear <= last_low_gear - 0.5:
+            # 为当前档位启动计时器（如果不存在）
+            if current_gear not in low_timers:
+                low_timers[current_gear] = now
+                print(f"  档位 {current_gear:.1f} 开始计时")
+            
+            # 检查是否持续1秒
+            if now - low_timers[current_gear] >= 1.0:
+                # 更新谷值和上次报警档位
+                low_valley = mark_spread
+                last_low_gear = current_gear  # 关键：更新为当前档位
+                msg = (f"🔔 PAXG 新低溢价 ≤10！\n"
+                       f"档位: {current_gear:.1f}\n"
+                       f"真实成交价差: {long_spread:.2f}\n"
+                       f"持续1秒: {mark_spread:.2f}")
+                send(msg)
+                print(f"  ✅ 报警发送: 档位 {current_gear:.1f}")
+                # 报警后清除计时器，避免重复
+                del low_timers[current_gear]
+    
+    # ===== 阈值外清理 =====
     else:
-        # 情况4：回到阈值内，清除计时器
-        if high_state["pending"]:
-            high_state["pending"] = False
-            print(f"  → 回到阈值内，清除计时器")
-
-    # ===== ≤10 持续1秒确认 =====
-    if mark_spread <= 10:
-        if not low_state["pending"] or low_state["last_value"] > 10:
-            low_state["pending"] = True
-            low_state["since"] = now
-            low_state["last_value"] = mark_spread
-            print(f"  → 开始计时 ≤10 (初始值: {mark_spread:.2f})")
-        
-        elif abs(mark_spread - low_state["last_value"]) > 0.1:
-            low_state["since"] = now
-            low_state["last_value"] = mark_spread
-            print(f"  → 价差变化，重置计时器 (新值: {mark_spread:.2f})")
-        
-        elif now - low_state["since"] >= 1.0 and mark_spread < low_valley - 0.5:
-            low_valley = mark_spread
-            low_state["pending"] = False
-            msg = (f"🔔 PAXG 新低溢价 ≤10！\n"
-                   f"真实成交价差: {long_spread:.2f}\n"
-                   f"持续1秒确认: {mark_spread:.2f}\n"
-                   f"（做多PAXG@市价，做空XAUT@市价）")
-            send(msg)
-            print(f"  ✅ 报警发送: {mark_spread:.2f}")
-
-    else:
-        if low_state["pending"]:
-            low_state["pending"] = False
-            print(f"  → 回到阈值内，清除计时器")
+        if high_timers:
+            high_timers.clear()
+            print(f"  清除所有 ≥16 计时器")
+        if low_timers:
+            low_timers.clear()
+            print(f"  清除所有 ≤10 计时器")
 
 
 if __name__ == "__main__":
-    send("✅ 1秒持续确认监控已启动")
+    send("✅ 1秒持续+档位递增0.5 监控已启动")
     while True:
         try:
             main()
