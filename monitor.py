@@ -6,6 +6,7 @@ import requests
 import logging
 import pickle
 import argparse
+import sys
 from dataclasses import dataclass, field
 from telegram import Bot
 from typing import Dict, Optional
@@ -25,7 +26,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
-        logging.StreamHandler(),
+        logging.StreamHandler(sys.stdout),
         logging.FileHandler("monitor.log", encoding='utf-8')
     ]
 )
@@ -53,7 +54,7 @@ class PriceData:
 
 
 class PersistState:
-    """状态持久化类 - 自动创建目录"""
+    """状态持久化类"""
     FILE_PATH = "/tmp/spread_state.pkl"
     
     @classmethod
@@ -198,6 +199,7 @@ class SpreadMonitor:
             state.clear_timers()
     
     def send_message(self, msg: str) -> None:
+        """发送Telegram消息"""
         try:
             self.bot.send_message(chat_id=self.chat_id, text=msg)
         except Exception as e:
@@ -205,11 +207,7 @@ class SpreadMonitor:
     
     def run_once(self) -> None:
         """单次运行模式 - 用于GitHub Actions"""
-        logger.info("=" * 60)
         logger.info("单次运行模式启动")
-        logger.info(f"启动时间: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        logger.info(f"加载状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}")
-        logger.info("=" * 60)
         
         # 发送启动消息
         try:
@@ -242,9 +240,8 @@ class SpreadMonitor:
         except Exception as e:
             logger.exception(f"检测异常: {e}")
         
-        logger.info("单次运行完成，等待消息发送...")
-        time.sleep(3)  # 确保所有消息发送完成
-        logger.info("进程退出")
+        logger.info("等待消息发送完成...")
+        time.sleep(3)
     
     def run(self) -> None:
         """持续运行模式 - 用于VPS"""
@@ -256,8 +253,8 @@ class SpreadMonitor:
         
         # 发送启动消息
         try:
-            start_msg = f"✅ 监控启动成功\n检测间隔: {CONFIG['CHECK_SEC']}秒"
-            self.bot.send_message(chat_id=self.chat_id, text=start_msg)
+            start_msg = f"✅ VPS监控启动成功\n检测间隔: {CONFIG['CHECK_SEC']}秒"
+            self.send_message(start_msg)
             logger.info("启动消息已发送到 Telegram")
         except Exception as e:
             logger.error(f"启动消息发送失败: {e}")
