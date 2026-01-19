@@ -63,10 +63,10 @@ class PersistState:
             try:
                 with open(cls.FILE_PATH, 'rb') as f:
                     data = pickle.load(f)
-                    logger.info(f"加载历史状态: {data}")
+                    logger.info(f"✅ 状态加载成功: {data}")
                     return data.get('high'), data.get('low')
             except Exception as e:
-                logger.warning(f"状态加载失败: {e}")
+                logger.warning(f"❌ 状态加载失败: {e}")
         logger.info("⚠️ 无历史状态文件")
         return None, None
     
@@ -75,9 +75,9 @@ class PersistState:
         try:
             with open(cls.FILE_PATH, 'wb') as f:
                 pickle.dump({'high': high_gear, 'low': low_gear}, f)
-                logger.info(f"状态保存成功: high={high_gear}, low={low_gear}")
+                logger.info(f"✅ 状态保存成功: high={high_gear}, low={low_gear}")
         except Exception as e:
-            logger.error(f"状态保存失败: {e}")
+            logger.error(f"❌ 状态保存失败: {e}")
 
 
 class SpreadMonitor:
@@ -88,7 +88,6 @@ class SpreadMonitor:
         logger.info(f"💬 Chat ID: {chat_id}")
         logger.info("=" * 80)
         
-        # 验证 Bot Token 格式
         if ":" not in bot_token:
             raise ValueError("Bot Token 格式错误: 必须包含 ':'")
         
@@ -215,8 +214,7 @@ class SpreadMonitor:
     def send_message(self, msg: str) -> None:
         """发送Telegram消息（修复f-string错误）"""
         try:
-            # 修复：在f-string外部处理字符串
-            clean_msg = msg.replace('\n', ' ')
+            clean_msg = msg.replace('\n', ' ')  # 在f-string外部处理
             logger.info(f"📤 发送消息: {clean_msg}")
             
             result = self.bot.send_message(chat_id=self.chat_id, text=msg)
