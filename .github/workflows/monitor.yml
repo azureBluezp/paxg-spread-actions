@@ -5,15 +5,15 @@ on:
     - cron: '*/10 * * * *'  # 每10分钟触发一次
   workflow_dispatch:
 
-# 限制并发，防止重叠
+# 关键：强制排队，等待前一个完成
 concurrency:
   group: paxg-monitor
-  cancel-in-progress: false
+  cancel-in-progress: false  # false = 等待前一个完成
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 5  # 单次运行不超过5分钟
+    timeout-minutes: 35  # 30分钟运行 + 5分钟缓冲
     
     steps:
       - name: Checkout code
@@ -34,13 +34,13 @@ jobs:
           key: paxg-spread-state-${{ github.run_id }}
           restore-keys: paxg-spread-state-
       
-      - name: Run silent monitor
+      - name: Run continuous monitor
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
-          # ⭐ 使用静默单次模式：只发送价格报警，不发送启动消息
-          timeout 120s python monitor.py --once
+          # ⭐ 持续运行30分钟（移除timeout限制）
+          python monitor.py
       
       - name: Save state
         if: always()
