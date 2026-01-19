@@ -1,25 +1,55 @@
-name: PAXG-XAUT-Spread
+name: PAXG-XAUT-Spread-Monitor
 
 on:
   schedule:
-    - cron: '0/30 * * * *'   # ← 每 30 分钟触发（减少并发概率）
+    - cron: '*/5 * * * *'  # 每5分钟触发（调整为适合您的频率）
   workflow_dispatch:
-
-concurrency:
-  group: paxg-monitor        # ← 强制串行：同一秒只剩 1 台
-  cancel-in-progress: true
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
+    
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
-      - run: pip install -r requirements.txt
-      - run: python monitor.py
+          python-version: '3.9'
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      # 关键步骤：恢复之前的状态文件
+      - name: Restore state cache
+        id: cache-state
+        uses: actions/cache@v3
+        with:
+          path: /tmp/spread_state.pkl
+          key: paxg-spread-state-${{ github.run_id }}
+          restore-keys: |
+            paxg-spread-state-
+      
+      - name: Run monitor
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-          CHECK_SEC: ${{ secrets.CHECK_SEC }}
+          CHECK_SEC: 30
+        run: |
+          # 运行监控脚本
+          python monitor.py &
+          # 等待足够时间完成检测
+          sleep 60
+          # 停止脚本
+          pkill -f monitor.py || true
+      
+      # 关键步骤：保存当前状态
+      - name: Save state for next run
+        if: always()
+        run: |
+          # 确保状态文件存在
+          if [ -f /tmp/spread_state.pkl ]; then
+            echo "状态文件已保存"
+          fi
