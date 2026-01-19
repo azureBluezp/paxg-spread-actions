@@ -67,7 +67,7 @@ class PersistState:
                     return data.get('high'), data.get('low')
             except Exception as e:
                 logger.warning(f"❌ 状态加载失败: {e}")
-        logger.info("⚠️ 无历史状态文件（首次运行）")
+        logger.info("⚠️ 无历史状态文件")
         return None, None
     
     @classmethod
@@ -78,11 +78,6 @@ class PersistState:
                 logger.info(f"✅ 状态保存成功: high={high_gear}, low={low_gear}")
         except Exception as e:
             logger.error(f"❌ 状态保存失败: {e}")
-    
-    @classmethod
-    def exists(cls) -> bool:
-        """检查状态文件是否存在"""
-        return os.path.exists(cls.FILE_PATH)
 
 
 class SpreadMonitor:
@@ -100,10 +95,6 @@ class SpreadMonitor:
         self.high_state = SpreadState(peak=CONFIG["HIGH_THRESHOLD"])
         self.low_state = SpreadState(peak=CONFIG["LOW_THRESHOLD"])
         
-        # 检查是否首次运行
-        self.is_first_run = not PersistState.exists()
-        logger.info(f"🎯 运行类型: {'首次运行' if self.is_first_run else '常规运行'}")
-        
         self._load_persistent_state()
     
     def _load_persistent_state(self):
@@ -111,7 +102,7 @@ class SpreadMonitor:
         high_gear, low_gear = PersistState.load()
         self.high_state.last_gear = high_gear
         self.low_state.last_gear = low_gear
-        logger.info(f"📊 档位状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}")
+        logger.info(f"档位状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}")
     
     def _save_persistent_state(self):
         """保存当前档位记忆"""
@@ -176,7 +167,7 @@ class SpreadMonitor:
     ) -> bool:
         """
         检查阈值
-        返回: bool - 是否触发了报警
+        返回: bool - 是否触发了价格报警
         """
         mark_spread = spreads["mark"]
         directional_spread = spreads["short" if is_high else "long"]
@@ -221,12 +212,12 @@ class SpreadMonitor:
             self.send_message(msg)
             logger.info(f"  ✅ 价格报警发送: 档位 {current_gear:.1f}")
             state.clear_timers()
-            return True  # 触发了报警
+            return True
         
         return False
     
     def send_message(self, msg: str) -> None:
-        """发送Telegram消息"""
+        """发送Telegram消息（修复f-string错误）"""
         try:
             clean_msg = msg.replace('\n', ' ')  # 在f-string外部处理
             logger.info(f"📤 发送消息: {clean_msg}")
@@ -238,23 +229,19 @@ class SpreadMonitor:
             logger.error(f"❌ 发送失败: {e}")
     
     def run_continuous(self, minutes: int = 30):
-        """持续运行模式（仅在首次运行时发送启动消息）"""
+        """持续运行模式（30分钟）"""
         logger.info("=" * 80)
         logger.info(f"🚀 持续监控启动: 运行 {minutes} 分钟")
         logger.info(f"⏰ 开始时间: {dt.datetime.now()}")
-        
-        # 仅在首次运行时发送启动消息
-        if self.is_first_run:
-            logger.info("🎯 首次运行，发送启动消息")
-            try:
-                start_msg = f"✅ PAXG监控启动\n高价档: {self.high_state.last_gear}\n低价档: {self.low_state.last_gear}"
-                self.send_message(start_msg)
-            except Exception as e:
-                logger.error(f"❌ 启动消息失败: {e}")
-        else:
-            logger.info("🎯 常规运行，静默模式（仅价格触发时报警）")
-        
+        logger.info(f"档位状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}")
         logger.info("=" * 80)
+        
+        # 发送启动消息（标记监控周期开始）
+        try:
+            start_msg = f"✅ 监控周期启动\n运行时长: {minutes}分钟\n档位: 高={self.high_state.last_gear} 低={self.low_state.last_gear}"
+            self.send_message(start_msg)
+        except Exception as e:
+            logger.error(f"❌ 启动消息失败: {e}")
         
         # 持续运行
         start_time = time.time()
@@ -294,22 +281,14 @@ class SpreadMonitor:
         logger.info(f"⏰ 运行结束: {dt.datetime.now()}")
         logger.info(f"📊 触发价格报警次数: {alert_count}")
         logger.info("=" * 80)
-        
-        # 发送结束消息（仅当触发过报警时）
-        if alert_count > 0:
-            try:
-                end_msg = f"✅ 监控周期结束\n报警次数: {alert_count}"
-                self.send_message(end_msg)
-                time.sleep(3)
-            except Exception as e:
-                logger.error(f"❌ 结束消息失败: {e}")
     
     def run_once(self) -> None:
-        """单次运行模式（完全静默，仅价格报警）"""
+        """单次运行模式（不推荐使用）"""
         logger.info("=" * 80)
         logger.info("🚀 单次检测模式启动")
         logger.info(f"⏰ 时间: {dt.datetime.now()}")
-        logger.info(f"📊 状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}")
+        logger.info(f"档位状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}")
+        logger.info("=" * 80)
         
         # 静默检测，不发送启动消息
         try:
@@ -355,11 +334,10 @@ def validate_config() -> bool:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--once", action="store_true", help="静默单次模式")
-    parser.add_argument("--silent", action="store_true", help="完全静默（仅价格报警）")
+    parser.add_argument("--once", action="store_true", help="单次运行模式")
     args = parser.parse_args()
     
-    logger.info(f"🎯 运行模式: {'静默单次' if args.once else '持续30分钟'}")
+    logger.info(f"🎯 运行模式: {'单次' if args.once else '持续30分钟'}")
     
     if not validate_config():
         logger.error("❌ 配置验证失败，退出")
@@ -371,10 +349,10 @@ if __name__ == "__main__":
     )
     
     try:
-        if args.once:  # GitHub Actions推荐此模式
-            monitor.run_once()  # 完全静默，仅价格报警
+        if args.once:
+            monitor.run_once()  # 不推荐
         else:
-            monitor.run()  # 持续运行30分钟，仅在首次发送启动消息
+            monitor.run()  # 持续运行30分钟
     except Exception as e:
         logger.exception(f"❌ 致命错误: {e}")
         exit(1)
