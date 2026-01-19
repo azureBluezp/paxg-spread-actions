@@ -77,9 +77,9 @@ def main():
                 high_peak = mark_spread
                 last_high_gear = current_gear  # 关键：更新为当前档位
                 msg = (f"🔔 PAXG 新高溢价 ≥16！\n"
-                       f"档位: {current_gear:.1f}\n"
                        f"真实成交价差: {short_spread:.2f}\n"
-                       f"持续1秒: {mark_spread:.2f}")
+                       f"（做空PAXG@市价，做多XAUT@市价）\n"
+                       f"Mark参考: {mark_spread:.2f}")
                 send(msg)
                 print(f"  ✅ 报警发送: 档位 {current_gear:.1f}")
                 # 报警后清除计时器，避免重复
@@ -106,9 +106,9 @@ def main():
                 low_valley = mark_spread
                 last_low_gear = current_gear  # 关键：更新为当前档位
                 msg = (f"🔔 PAXG 新低溢价 ≤10！\n"
-                       f"档位: {current_gear:.1f}\n"
                        f"真实成交价差: {long_spread:.2f}\n"
-                       f"持续1秒: {mark_spread:.2f}")
+                       f"（做多PAXG@市价，做空XAUT@市价）\n"
+                       f"Mark参考: {mark_spread:.2f}")
                 send(msg)
                 print(f"  ✅ 报警发送: 档位 {current_gear:.1f}")
                 # 报警后清除计时器，避免重复
