@@ -11,9 +11,9 @@ from dataclasses import dataclass, field
 from telegram import Bot
 from typing import Dict, Optional
 
-# ===== 配置常量（检查间隔10秒）=====
+# ===== 配置常量 =====
 CONFIG = {
-    "CHECK_SEC": int(os.getenv("CHECK_SEC", 10)),  # 从30改为10秒
+    "CHECK_SEC": int(os.getenv("CHECK_SEC", 10)),  # 10秒检查
     "BASE_URL": "https://omni-client-api.prod.ap-northeast-1.variational.io",
     "HIGH_THRESHOLD": 16.0,
     "LOW_THRESHOLD": 10.0,
