@@ -1,17 +1,20 @@
 name: PAXG-XAUT-Spread-Monitor
 
 on:
-  push:  # 用于测试和激活
+  push:
     branches:
       - main
   schedule:
-    - cron: '*/1 * * * *'  # ⭐ 每分钟触发一次（最大频率）
+    - cron: '*/1 * * * *'  # 每分钟触发
   workflow_dispatch:
+
+# 完全移除 concurrency 限制，确保每分钟都能启动
+# concurrency 是导致任务被取消的常见原因
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 1  # ⭐ 限制在1分钟内完成
+    timeout-minutes: 2  # ⭐ 增加到2分钟，给50秒运行 + 70秒缓冲
     
     steps:
       - name: Checkout code
@@ -32,14 +35,14 @@ jobs:
           key: paxg-spread-state-${{ github.run_id }}
           restore-keys: paxg-spread-state-
       
-      - name: Run quick monitor
+      - name: Run quick monitor with buffer
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-          CHECK_SEC: 10  # 10秒检查一次
+          CHECK_SEC: 10
         run: |
-          # 快速检查（约50秒）
-          timeout 55s python monitor.py --once
+          # 运行最多60秒（5次检查 × 10秒 + 缓冲）
+          timeout 60s python monitor.py --once || true  # true 防止 timeout 导致失败
       
       - name: Save state
         if: always()
@@ -50,3 +53,16 @@ jobs:
           else
             echo "⚠️ 无状态文件"
           fi
+      
+      - name: Debug info
+        if: always()
+        run: |
+          echo "========== Debug Info =========="
+          echo "Workflow started at: $(date)"
+          echo "Python version: $(python --version)"
+          echo "GitHub Event: $GITHUB_EVENT_NAME"
+          echo "Recent runs:"
+          gh run list --workflow=monitor.yml --limit=3 || echo "No gh CLI"
+          echo "================================"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
