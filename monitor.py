@@ -2,329 +2,154 @@
 # -*- coding: utf-8 -*-
 
 import os
-import sys
 import time
-import json
 import logging
-import argparse
 import datetime as dt
-import pickle
 import cloudscraper
-from datetime import datetime
 from telegram import Bot
-from typing import Dict, Optional
-from dataclasses import dataclass, field
 
-# 加载 .env 文件
-from dotenv import load_dotenv
-load_dotenv()
+# ===== 配置 =====
+CHECK_SEC = 10
+BASE_URL = "https://omni-client-api.prod.ap-northeast-1.variational.io"
+HIGH_THRESHOLD = 16.0
+LOW_THRESHOLD = 10.0
+DURATION_SEC = 1.0
+GEAR_STEP = 0.5
 
-# ===== 配置常量 =====
-CONFIG = {
-    "CHECK_SEC": int(os.getenv("CHECK_SEC", 10)),  # 10秒检查间隔
-    "BASE_URL": "https://omni-client-api.prod.ap-northeast-1.variational.io",
-    "HIGH_THRESHOLD": 16.0,
-    "LOW_THRESHOLD": 10.0,
-    "DURATION_SEC": 1.0,
-    "GEAR_STEP": 0.5,
-}
+# ===== Telegram 配置 =====
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 
 # ===== 日志配置 =====
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("monitor.log", encoding='utf-8')
-    ]
+    format='%(asctime)s [%(levelname)s] %(message)s'
 )
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class SpreadState:
-    timers: Dict[float, float] = field(default_factory=dict)
-    peak: float = 0.0
-    last_gear: Optional[float] = None
-    
-    def clear_timers(self):
-        self.timers.clear()
-
-
-@dataclass
-class PriceData:
-    paxg: Optional[Dict] = None
-    xaut: Optional[Dict] = None
-    last_update: float = 0.0
-    
-    def is_expired(self, ttl: float = 5.0) -> bool:
-        return time.time() - self.last_update > ttl
-
-
-class PersistState:
-    """状态持久化类"""
-    FILE_PATH = "/tmp/spread_state.pkl"
-    
-    @classmethod
-    def load(cls) -> tuple:
-        if os.path.exists(cls.FILE_PATH):
-            try:
-                with open(cls.FILE_PATH, 'rb') as f:
-                    data = pickle.load(f)
-                    logger.info(f"✅ 状态加载成功: {data}")
-                    return data.get('high'), data.get('low')
-            except Exception as e:
-                logger.warning(f"❌ 状态加载失败: {e}")
-        logger.info("⚠️ 无历史状态文件")
-        return None, None
-    
-    @classmethod
-    def save(cls, high_gear: Optional[float], low_gear: Optional[float]) -> None:
-        try:
-            with open(cls.FILE_PATH, 'wb') as f:
-                pickle.dump({'high': high_gear, 'low': low_gear}, f)
-                logger.info(f"✅ 状态保存成功: high={high_gear}, low={low_gear}")
-        except Exception as e:
-            logger.error(f"❌ 状态保存失败: {e}")
-
-
 class SpreadMonitor:
-    def __init__(self, bot_token: str, chat_id: str):
-        logger.info("=" * 80)
+    def __init__(self):
         logger.info("🔧 初始化 SpreadMonitor")
-        logger.info("=" * 80)
-        
-        if ":" not in bot_token:
-            raise ValueError("Bot Token 格式错误: 必须包含 ':'")
-        
-        self.bot = Bot(token=bot_token)
-        self.chat_id = chat_id
-        self.cache = PriceData()
-        self.high_state = SpreadState(peak=CONFIG["HIGH_THRESHOLD"])
-        self.low_state = SpreadState(peak=CONFIG["LOW_THRESHOLD"])
-        
-        # 创建 cloudscraper 实例以更可靠地绕过 Cloudflare
-        self.scraper = cloudscraper.create_scraper()
-        
-        self._load_persistent_state()
+        self.bot = Bot(token=BOT_TOKEN)
+        self.last_high_gear = None
+        self.last_low_gear = None
     
-    def _load_persistent_state(self):
-        """加载持久化的档位记忆"""
-        high_gear, low_gear = PersistState.load()
-        self.high_state.last_gear = high_gear
-        self.low_state.last_gear = low_gear
-        logger.info(f"档位状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}")
-    
-    def get_both_assets(self) -> bool:
-        if not self.cache.is_expired():
-            return True
-        
+    def get_spread_data(self) -> dict:
+        """获取 PAXG & XAUT 价格数据"""
         try:
-            logger.debug("🌐 请求API...")
+            scraper = cloudscraper.create_scraper()
             
-            # 添加完整的浏览器请求头
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "application/json, text/plain, */*",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Connection": "keep-alive",
-                "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-                "Sec-Ch-Ua-Mobile": "?0",
-                "Sec-Ch-Ua-Platform": '"Windows"',
-                "Sec-Fetch-Dest": "empty",
-                "Sec-Fetch-Mode": "cors",
-                "Sec-Fetch-Site": "same-origin",
-                "Origin": "https://variational.io",
-                "Referer": "https://variational.io/",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "application/json"
             }
             
-            resp = self.scraper.get(
-                f"{CONFIG['BASE_URL']}/metadata/stats",
-                headers=headers,
-                timeout=10
-            )
+            resp = scraper.get(f"{BASE_URL}/metadata/stats", headers=headers, timeout=10)
             resp.raise_for_status()
             data = resp.json()
             
             listings = {item["ticker"]: item for item in data["listings"]}
-            if "PAXG" not in listings or "XAUT" not in listings:
-                logger.error("❌ 缺少交易对")
-                return False
             
-            self.cache.paxg = self._parse_asset(listings["PAXG"])
-            self.cache.xaut = self._parse_asset(listings["XAUT"])
-            self.cache.last_update = time.time()
-            logger.debug("✅ API成功")
-            return True
+            paxg = {
+                "mark": float(listings["PAXG"]["mark_price"]),
+                "bid_1k": float(listings["PAXG"]["quotes"]["size_1k"]["bid"]),
+                "ask_1k": float(listings["PAXG"]["quotes"]["size_1k"]["ask"]),
+            }
+            
+            xaut = {
+                "mark": float(listings["XAUT"]["mark_price"]),
+                "bid_1k": float(listings["XAUT"]["quotes"]["size_1k"]["bid"]),
+                "ask_1k": float(listings["XAUT"]["quotes"]["size_1k"]["ask"]),
+            }
+            
+            return {
+                "mark": paxg["mark"] - xaut["mark"],
+                "short": paxg["bid_1k"] - xaut["ask_1k"],
+                "long": paxg["ask_1k"] - xaut["bid_1k"],
+            }
+            
         except Exception as e:
-            logger.error(f"❌ API失败: {e}")
-            return False
-    
-    @staticmethod
-    def _parse_asset(item: dict) -> dict:
-        return {
-            "mark": float(item["mark_price"]),
-            "bid_1k": float(item["quotes"]["size_1k"]["bid"]),
-            "ask_1k": float(item["quotes"]["size_1k"]["ask"]),
-        }
-    
-    def calculate_spreads(self) -> Optional[dict]:
-        if not self.cache.paxg or not self.cache.xaut:
+            logger.error(f"❌ 获取数据失败: {e}")
             return None
-        paxg, xaut = self.cache.paxg, self.cache.xaut
-        return {
-            "mark": paxg["mark"] - xaut["mark"],
-            "short": paxg["bid_1k"] - xaut["ask_1k"],
-            "long": paxg["ask_1k"] - xaut["bid_1k"],
-        }
     
-    @staticmethod
-    def calculate_gear(value: float) -> float:
+    def calculate_gear(self, value: float) -> float:
         return int(value * 2) / 2
     
-    def check_threshold(
-        self, 
-        spreads: dict,
-        state: SpreadState,
-        opposite_state: SpreadState,
-        threshold: float,
-        is_high: bool
-    ) -> bool:
-        """
-        检查阈值
-        返回: bool - 是否触发了价格报警
-        """
+    def check_and_alert(self, spreads: dict):
+        """检查价差并发送警报"""
+        if not spreads:
+            return
+        
         mark_spread = spreads["mark"]
-        directional_spread = spreads["short" if is_high else "long"]
+        logger.info(f"当前价差: Mark={mark_spread:.2f}")
         
-        condition = mark_spread >= threshold if is_high else mark_spread <= threshold
+        # 检查高价阈值
+        if mark_spread >= HIGH_THRESHOLD:
+            current_gear = self.calculate_gear(mark_spread)
+            if self.last_high_gear is None or current_gear >= (self.last_high_gear + GEAR_STEP):
+                self.last_high_gear = current_gear
+                self.last_low_gear = None
+                
+                msg = (
+                    f"🔔 PAXG 溢价 ≥ {HIGH_THRESHOLD}！\n"
+                    f"当前档位: {current_gear:.1f}\n"
+                    f"Mark价差: {mark_spread:.2f}\n"
+                    f"真实成交价差: {spreads['short']:.2f}\n"
+                    f"建议: 做空PAXG，做多XAUT"
+                )
+                
+                self.send_message(msg)
+                logger.info(f"✅ 高价报警发送: {current_gear:.1f}")
         
-        if not condition:
-            if state.timers:
-                state.clear_timers()
-                logger.info(f"  清除{'≥16' if is_high else '≤10'}计时器")
-            return False
-        
-        current_gear = self.calculate_gear(mark_spread)
-        
-        if is_high:
-            step_check = current_gear >= (state.last_gear or -999) + CONFIG["GEAR_STEP"]
-        else:
-            step_check = current_gear <= (state.last_gear or 999) - CONFIG["GEAR_STEP"]
-        
-        if not step_check:
-            return False
-        
-        if current_gear not in state.timers:
-            state.timers[current_gear] = time.time()
-            logger.info(f"  档位 {current_gear:.1f} 开始计时")
-        
-        if time.time() - state.timers[current_gear] >= CONFIG["DURATION_SEC"]:
-            state.peak = mark_spread
-            state.last_gear = current_gear
-            opposite_state.last_gear = None
-            
-            self._save_persistent_state()
-            
-            action = "做空PAXG@市价，做多XAUT@市价" if is_high else "做多PAXG@市价，做空XAUT@市价"
-            msg = (
-                f"🔔 PAXG {'新高' if is_high else '新低'}溢价 {'≥16' if is_high else '≤10'}！\n"
-                f"真实成交价差: {directional_spread:.2f}\n"
-                f"（{action}）\n"
-                f"Mark参考: {mark_spread:.2f}"
-            )
-            
-            self.send_message(msg)
-            logger.info(f"  ✅ 价格报警发送: 档位 {current_gear:.1f}")
-            state.clear_timers()
-            return True
-        
-        return False
+        # 检查低价阈值
+        elif mark_spread <= LOW_THRESHOLD:
+            current_gear = self.calculate_gear(mark_spread)
+            if self.last_low_gear is None or current_gear <= (self.last_low_gear - GEAR_STEP):
+                self.last_low_gear = current_gear
+                self.last_high_gear = None
+                
+                msg = (
+                    f"🔔 PAXG 溢价 ≤ {LOW_THRESHOLD}！\n"
+                    f"当前档位: {current_gear:.1f}\n"
+                    f"Mark价差: {mark_spread:.2f}\n"
+                    f"真实成交价差: {spreads['long']:.2f}\n"
+                    f"建议: 做多PAXG，做空XAUT"
+                )
+                
+                self.send_message(msg)
+                logger.info(f"✅ 低价报警发送: {current_gear:.1f}")
     
-    def _save_persistent_state(self):
-        """保存档位状态到文件"""
-        PersistState.save(self.high_state.last_gear, self.low_state.last_gear)
-    
-    def send_message(self, msg: str) -> None:
+    def send_message(self, msg: str):
         """发送Telegram消息"""
         try:
-            clean_msg = msg.replace('\n', ' ')
-            logger.info(f"📤 发送消息: {clean_msg}")
-            
-            result = self.bot.send_message(chat_id=self.chat_id, text=msg)
-            logger.info(f"✅ 消息成功: {result.message_id}")
-            time.sleep(2)
+            logger.info(f"📤 发送: {msg[:50]}...")
+            self.bot.send_message(chat_id=CHAT_ID, text=msg)
+            logger.info("✅ 消息发送成功")
         except Exception as e:
             logger.error(f"❌ 发送失败: {e}")
     
-    def run_once(self):
-        """单次运行 - 快速检查5次（约50秒）"""
+    def run(self):
+        """运行一次快速检测"""
         logger.info("=" * 80)
-        logger.info("🚀 快速检测模式启动")
+        logger.info("🚀 PAXG 价差监控启动")
         logger.info(f"⏰ 时间: {dt.datetime.now()}")
-        logger.info(f"档位状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}")
         logger.info("=" * 80)
         
-        max_checks = 5
+        max_checks = 5  # 运行5次检查
         for i in range(max_checks):
-            try:
-                if self.get_both_assets():
-                    spreads = self.calculate_spreads()
-                    if spreads:
-                        gear = self.calculate_gear(spreads["mark"])
-                        logger.info(f"🎯 检测 {i+1}/{max_checks}: Mark={spreads['mark']:.2f} 档位={gear:.1f}")
-                        
-                        self.check_threshold(spreads, self.high_state, self.low_state, CONFIG["HIGH_THRESHOLD"], True)
-                        self.check_threshold(spreads, self.low_state, self.high_state, CONFIG["LOW_THRESHOLD"], False)
-            except Exception as e:
-                logger.exception(f"❌ 检测失败: {e}")
-            
-            time.sleep(CONFIG["CHECK_SEC"])
+            spreads = self.get_spread_data()
+            if spreads:
+                self.check_and_alert(spreads)
+            time.sleep(CHECK_SEC)
         
         logger.info("✅ 快速检测完成")
-    
-    def run(self):
-        self.run_once()
-
-
-def validate_config() -> bool:
-    logger.info("🔍 验证配置...")
-    required = ["BOT_TOKEN", "CHAT_ID"]
-    for var in required:
-        value = os.getenv(var)
-        if not value:
-            logger.error(f"❌ 缺少 {var}")
-            return False
-        logger.info(f"✅ {var}: {value[:10]}...")
-    
-    token = os.getenv("BOT_TOKEN")
-    if ":" not in token:
-        logger.error("❌ BOT_TOKEN格式错误")
-        return False
-    
-    logger.info("✅ 配置验证通过")
-    return True
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--once", action="store_true", help="单次运行模式（默认）")
-    args = parser.parse_args()
-    
-    logger.info("🎯 运行模式: 快速检测")
-    
-    if not validate_config():
-        logger.error("❌ 配置验证失败，退出")
+    if not BOT_TOKEN or not CHAT_ID:
+        logger.error("❌ 缺少 BOT_TOKEN 或 CHAT_ID")
         exit(1)
     
-    monitor = SpreadMonitor(
-        bot_token=os.getenv("BOT_TOKEN"),
-        chat_id=os.getenv("CHAT_ID")
-    )
-    
-    try:
-        monitor.run()
-    except Exception as e:
-        logger.exception(f"❌ 致命错误: {e}")
-        exit(1)
+    monitor = SpreadMonitor()
+    monitor.run()
