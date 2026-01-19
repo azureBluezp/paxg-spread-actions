@@ -11,9 +11,8 @@ from dataclasses import dataclass, field
 from telegram import Bot
 from typing import Dict, Optional
 
-# ===== 配置常量 =====
 CONFIG = {
-    "CHECK_SEC": int(os.getenv("CHECK_SEC", 10)),  # 10秒检查
+    "CHECK_SEC": int(os.getenv("CHECK_SEC", 10)),
     "BASE_URL": "https://omni-client-api.prod.ap-northeast-1.variational.io",
     "HIGH_THRESHOLD": 16.0,
     "LOW_THRESHOLD": 10.0,
@@ -21,7 +20,6 @@ CONFIG = {
     "GEAR_STEP": 0.5,
 }
 
-# ===== 日志配置 =====
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
@@ -54,7 +52,6 @@ class PriceData:
 
 
 class PersistState:
-    """状态持久化类"""
     FILE_PATH = "/tmp/spread_state.pkl"
     
     @classmethod
@@ -98,15 +95,10 @@ class SpreadMonitor:
         self._load_persistent_state()
     
     def _load_persistent_state(self):
-        """加载持久化的档位记忆"""
         high_gear, low_gear = PersistState.load()
         self.high_state.last_gear = high_gear
         self.low_state.last_gear = low_gear
         logger.info(f"档位状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}")
-    
-    def _save_persistent_state(self):
-        """保存当前档位记忆"""
-        PersistState.save(self.high_state.last_gear, self.low_state.last_gear)
     
     def get_both_assets(self) -> bool:
         if not self.cache.is_expired():
@@ -165,10 +157,6 @@ class SpreadMonitor:
         threshold: float,
         is_high: bool
     ) -> bool:
-        """
-        检查阈值
-        返回: bool - 是否触发了价格报警
-        """
         mark_spread = spreads["mark"]
         directional_spread = spreads["short" if is_high else "long"]
         
@@ -212,16 +200,15 @@ class SpreadMonitor:
             self.send_message(msg)
             logger.info(f"  ✅ 价格报警发送: 档位 {current_gear:.1f}")
             state.clear_timers()
-            return True  # 触发了报警
+            return True
         
         return False
     
     def send_message(self, msg: str) -> None:
-        """发送Telegram消息（修复f-string错误）"""
+        clean_msg = msg.replace('\n', ' ')
+        logger.info(f"📤 发送消息: {clean_msg}")
+        
         try:
-            clean_msg = msg.replace('\n', ' ')  # 在f-string外部处理
-            logger.info(f"📤 发送消息: {clean_msg}")
-            
             result = self.bot.send_message(chat_id=self.chat_id, text=msg)
             logger.info(f"✅ 消息成功: {result.message_id}")
             time.sleep(2)
@@ -229,21 +216,18 @@ class SpreadMonitor:
             logger.error(f"❌ 发送失败: {e}")
     
     def run_continuous(self, minutes: int = 5):
-        """持续运行模式（5分钟）"""
         logger.info("=" * 80)
         logger.info(f"🚀 持续监控启动: 运行 {minutes} 分钟")
         logger.info(f"⏰ 开始时间: {dt.datetime.now()}")
         logger.info(f"档位状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}")
         logger.info("=" * 80)
         
-        # 发送启动消息（标记监控周期开始）
         try:
             start_msg = f"✅ 监控周期启动\n运行时长: {minutes}分钟\n档位: 高={self.high_state.last_gear} 低={self.low_state.last_gear}"
             self.send_message(start_msg)
         except Exception as e:
             logger.error(f"❌ 启动消息失败: {e}")
         
-        # 持续运行
         start_time = time.time()
         max_runtime = minutes * 60
         alert_count = 0
@@ -256,7 +240,6 @@ class SpreadMonitor:
                         gear = self.calculate_gear(spreads["mark"])
                         logger.info(f"{dt.datetime.now():%H:%M:%S} Mark={spreads['mark']:.2f} 档位={gear:.1f}")
                         
-                        # 检查高价区
                         high_triggered = self.check_threshold(
                             spreads, self.high_state, self.low_state, 
                             CONFIG["HIGH_THRESHOLD"], True
@@ -264,7 +247,6 @@ class SpreadMonitor:
                         if high_triggered:
                             alert_count += 1
                         
-                        # 检查低价区
                         low_triggered = self.check_threshold(
                             spreads, self.low_state, self.high_state, 
                             CONFIG["LOW_THRESHOLD"], False
@@ -283,7 +265,6 @@ class SpreadMonitor:
         logger.info("=" * 80)
     
     def run_once(self) -> None:
-        """单次运行模式"""
         logger.info("=" * 80)
         logger.info("🚀 单次检测模式启动")
         logger.info(f"⏰ 时间: {dt.datetime.now()}")
@@ -305,8 +286,7 @@ class SpreadMonitor:
         logger.info("✅ 单次检测结束")
     
     def run(self) -> None:
-        """默认持续运行5分钟"""
-        self.run_continuous(minutes=5)  # 从30改为5
+        self.run_continuous(minutes=5)
 
 
 def validate_config() -> bool:
@@ -348,7 +328,7 @@ if __name__ == "__main__":
         if args.once:
             monitor.run_once()
         else:
-            monitor.run()  # 持续运行5分钟
+            monitor.run()
     except Exception as e:
         logger.exception(f"❌ 致命错误: {e}")
         exit(1)
