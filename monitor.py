@@ -5,6 +5,7 @@ import datetime as dt
 import requests
 import logging
 import pickle
+import argparse
 from dataclasses import dataclass, field
 from telegram import Bot
 from typing import Dict, Optional
@@ -52,7 +53,7 @@ class PriceData:
 
 
 class PersistState:
-    """状态持久化类"""
+    """状态持久化类 - 自动创建目录"""
     FILE_PATH = "/tmp/spread_state.pkl"
     
     @classmethod
@@ -98,7 +99,6 @@ class SpreadMonitor:
         PersistState.save(self.high_state.last_gear, self.low_state.last_gear)
     
     def get_both_assets(self) -> bool:
-        """获取资产数据，带5秒缓存"""
         if not self.cache.is_expired():
             return True
         
@@ -125,7 +125,6 @@ class SpreadMonitor:
     
     @staticmethod
     def _parse_asset(item: dict) -> dict:
-        """统一解析资产数据"""
         return {
             "mark": float(item["mark_price"]),
             "bid_1k": float(item["quotes"]["size_1k"]["bid"]),
@@ -133,7 +132,6 @@ class SpreadMonitor:
         }
     
     def calculate_spreads(self) -> Optional[dict]:
-        """计算各类价差"""
         if not self.cache.paxg or not self.cache.xaut:
             return None
         paxg, xaut = self.cache.paxg, self.cache.xaut
@@ -145,7 +143,6 @@ class SpreadMonitor:
     
     @staticmethod
     def calculate_gear(value: float) -> float:
-        """计算档位（0.5步长）"""
         return int(value * 2) / 2
     
     def check_threshold(
@@ -156,7 +153,6 @@ class SpreadMonitor:
         threshold: float,
         is_high: bool
     ) -> None:
-        """统一阈值检查逻辑，带双向重置"""
         mark_spread = spreads["mark"]
         directional_spread = spreads["short" if is_high else "long"]
         
@@ -170,7 +166,6 @@ class SpreadMonitor:
         
         current_gear = self.calculate_gear(mark_spread)
         
-        # 档位步进检查
         if is_high:
             step_check = current_gear >= (state.last_gear or -999) + CONFIG["GEAR_STEP"]
         else:
@@ -179,16 +174,14 @@ class SpreadMonitor:
         if not step_check:
             return
         
-        # 启动计时器
         if current_gear not in state.timers:
             state.timers[current_gear] = time.time()
             logger.info(f"  档位 {current_gear:.1f} 开始计时")
         
-        # 1秒持续确认
         if time.time() - state.timers[current_gear] >= CONFIG["DURATION_SEC"]:
             state.peak = mark_spread
             state.last_gear = current_gear
-            opposite_state.last_gear = None  # 核心：重置对方档位记忆
+            opposite_state.last_gear = None
             
             self._save_persistent_state()
             
@@ -205,7 +198,6 @@ class SpreadMonitor:
             state.clear_timers()
     
     def send_message(self, msg: str) -> None:
-        """发送Telegram消息"""
         try:
             self.bot.send_message(chat_id=self.chat_id, text=msg)
         except Exception as e:
@@ -213,29 +205,31 @@ class SpreadMonitor:
     
     def run_once(self) -> None:
         """单次运行模式 - 用于GitHub Actions"""
+        logger.info("=" * 60)
         logger.info("单次运行模式启动")
+        logger.info(f"启动时间: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"加载状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}")
+        logger.info("=" * 60)
         
-        # 强制发送启动消息
+        # 发送启动消息
         try:
             start_msg = (
-                "✅ Actions监控启动\n"
-                f"时间: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"✅ Actions监控启动\n"
                 f"状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}"
             )
-            self.send_message(start_msg)
+            self.bot.send_message(chat_id=self.chat_id, text=start_msg)
             logger.info("启动消息已发送")
+            time.sleep(3)  # 确保消息发送完成
         except Exception as e:
             logger.error(f"启动消息失败: {e}")
-        
-        # 等待消息发送完成
-        time.sleep(2)
         
         # 执行一次完整检查
         try:
             if self.get_both_assets():
                 spreads = self.calculate_spreads()
                 if spreads:
-                    logger.info(f"单次检测: Mark={spreads['mark']:.2f}")
+                    gear = self.calculate_gear(spreads["mark"])
+                    logger.info(f"检测: Mark={spreads['mark']:.2f} 档位={gear:.1f}")
                     
                     self.check_threshold(
                         spreads, self.high_state, self.low_state, 
@@ -246,30 +240,27 @@ class SpreadMonitor:
                         CONFIG["LOW_THRESHOLD"], False
                     )
         except Exception as e:
-            logger.exception(f"单次运行异常: {e}")
+            logger.exception(f"检测异常: {e}")
         
         logger.info("单次运行完成，等待消息发送...")
-        time.sleep(3)  # 确保消息发送完成
+        time.sleep(3)  # 确保所有消息发送完成
+        logger.info("进程退出")
     
     def run(self) -> None:
         """持续运行模式 - 用于VPS"""
-        logger.info("=" * 50)
+        logger.info("=" * 60)
         logger.info("监控服务启动中...")
-        logger.info(f"配置: CHECK_SEC={CONFIG['CHECK_SEC']}s")
-        logger.info(f"当前状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}")
+        logger.info(f"配置: 检测间隔={CONFIG['CHECK_SEC']}秒")
+        logger.info(f"状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}")
+        logger.info("=" * 60)
         
         # 发送启动消息
         try:
-            start_msg = "✅ 监控启动成功\n" \
-                       f"时间: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n" \
-                       f"检测间隔: {CONFIG['CHECK_SEC']}秒"
-            self.send_message(start_msg)
+            start_msg = f"✅ 监控启动成功\n检测间隔: {CONFIG['CHECK_SEC']}秒"
+            self.bot.send_message(chat_id=self.chat_id, text=start_msg)
             logger.info("启动消息已发送到 Telegram")
         except Exception as e:
             logger.error(f"启动消息发送失败: {e}")
-        
-        logger.info("主循环开始运行")
-        logger.info("=" * 50)
         
         while True:
             try:
@@ -310,8 +301,6 @@ def validate_config() -> bool:
 
 
 if __name__ == "__main__":
-    import argparse
-    
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true", help="单次运行模式（用于GitHub Actions）")
     args = parser.parse_args()
