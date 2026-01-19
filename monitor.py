@@ -12,42 +12,73 @@ CHECK_SEC = int(os.getenv("CHECK_SEC", 30))
 bot = Bot(token=BOT_TOKEN)
 BASE_URL = "https://omni-client-api.prod.ap-northeast-1.variational.io"
 
-# ===== 内存锁（仅当前 runner 有效）=====
-high_peak = 16.0
-low_valley = 10.0
-last_high_key = ""
-last_low_key = ""
+# ===== 内存锁（全局变量，仅当前runner有效）=====
+high_peak = 16.0     # 历史最高mark价差
+low_valley = 10.0    # 历史最低mark价差
 
-def price(sym: str) -> float:
+
+def get_asset_data(sym: str) -> dict:
+    """获取资产数据：mark_price + bid/ask"""
     data = requests.get(f"{BASE_URL}/metadata/stats", timeout=10).json()
-    for i in data["listings"]:
-        if i["ticker"] == sym:
-            return float(i["mark_price"])
-    raise RuntimeError(f"{sym} not found")
+    for item in data["listings"]:
+        if item["ticker"] == sym:
+            return {
+                "mark_price": float(item["mark_price"]),
+                "bid_1k": float(item["quotes"]["size_1k"]["bid"]),
+                "ask_1k": float(item["quotes"]["size_1k"]["ask"])
+            }
+    raise RuntimeError(f"{sym} 未找到")
+
 
 def send(msg: str):
     bot.send_message(chat_id=CHAT_ID, text=msg)
 
+
 def main():
-    global high_peak, low_valley, last_high_key, last_low_key
+    global high_peak, low_valley
     
-    paxg = price("PAXG")
-    xaut = price("XAUT")
-    spread = paxg - xaut
-    print(f"{dt.datetime.now():%Y-%m-%d %H:%M:%S}  PAXG={paxg:.2f}  XAUT={xaut:.2f}  spread={spread:.2f}")
+    # 获取两种价格
+    paxg = get_asset_data("PAXG")
+    xaut = get_asset_data("XAUT")
+    
+    # 报警价差（Mark Price，实时无延迟）
+    mark_spread = paxg["mark_price"] - xaut["mark_price"]
+    
+    # 真实套利价差（Bid/Ask，可立即成交）
+    # 做空PAXG做多XAUT：卖PAXG@bid，买XAUT@ask
+    short_spread = paxg["bid_1k"] - xaut["ask_1k"]
+    # 做多PAXG做空XAUT：买PAXG@ask，卖XAUT@bid
+    long_spread = paxg["ask_1k"] - xaut["bid_1k"]
+    
+    print(f"{dt.datetime.now():%Y-%m-%d %H:%M:%S}  "
+          f"PAXG_mark={paxg['mark_price']:.2f}  "
+          f"XAUT_mark={xaut['mark_price']:.2f}  "
+          f"mark_spread={mark_spread:.2f}  "
+          f"short_spread={short_spread:.2f}  "
+          f"long_spread={long_spread:.2f}")
 
-    # ===== 新高：> 上一档 +0.5 =====
-    if spread >= 16 and spread > high_peak + 0.5:
-        high_peak = spread
-        send(f"🔔 PAXG 新高溢价！\n价差={spread:.2f} (前高+{spread-high_peak:.2f})")
+    # ===== 新高锁：> 上一档 +0.5（mark价差）=====
+    if mark_spread >= 16 and mark_spread > high_peak + 0.5:
+        high_peak = mark_spread
+        msg = (f"🔔 PAXG 新高溢价！\n"
+               f"Mark价差: {mark_spread:.2f}\n"
+               f"做空PAXG价差: {short_spread:.2f}\n"
+               f"做多PAXG价差: {long_spread:.2f}\n"
+               f"PAXG={paxg['mark_price']:.2f}  XAUT={xaut['mark_price']:.2f}")
+        send(msg)
 
-    # ===== 新低：< 上一档 -0.5 =====
-    elif spread <= 10 and spread < low_valley - 0.5:
-        low_valley = spread
-        send(f"🔔 PAXG 新低溢价！\n价差={spread:.2f} (前低-{low_valley-spread:.2f})")
+    # ===== 新低锁：< 上一档 -0.5（mark价差）=====
+    elif mark_spread <= 10 and mark_spread < low_valley - 0.5:
+        low_valley = mark_spread
+        msg = (f"🔔 PAXG 新低溢价！\n"
+               f"Mark价差: {mark_spread:.2f}\n"
+               f"做空PAXG价差: {short_spread:.2f}\n"
+               f"做多PAXG价差: {long_spread:.2f}\n"
+               f"PAXG={paxg['mark_price']:.2f}  XAUT={xaut['mark_price']:.2f}")
+        send(msg)
 
 if __name__ == "__main__":
-    send("✅ 监控已启动")
+    send("✅ Mark+Bid/Ask 监控已启动")
     while True:
         try:
             main()
