@@ -1,23 +1,17 @@
 name: PAXG-XAUT-Spread-Monitor
 
-# 添加 push 触发用于强制激活
 on:
-  push:
+  push:  # 用于测试和激活
     branches:
       - main
   schedule:
-    - cron: '*/5 * * * *'  # 每5分钟触发
+    - cron: '*/1 * * * *'  # ⭐ 每分钟触发一次（最大频率）
   workflow_dispatch:
-
-# 移除 concurrency 来测试队列功能
-# concurrency:
-#   group: paxg-monitor
-#   cancel-in-progress: false
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 1  # ⭐ 限制在1分钟内完成
     
     steps:
       - name: Checkout code
@@ -38,14 +32,14 @@ jobs:
           key: paxg-spread-state-${{ github.run_id }}
           restore-keys: paxg-spread-state-
       
-      - name: Run continuous monitor
+      - name: Run quick monitor
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-          CHECK_SEC: 10
+          CHECK_SEC: 10  # 10秒检查一次
         run: |
-          # 运行5分钟
-          python monitor.py
+          # 快速检查（约50秒）
+          timeout 55s python monitor.py --once
       
       - name: Save state
         if: always()
@@ -56,12 +50,3 @@ jobs:
           else
             echo "⚠️ 无状态文件"
           fi
-      
-      - name: Check workflows
-        run: |
-          echo "当前时间: $(date)"
-          echo "下一个定时触发将在 $(date -d '+5 minutes' '+%H:%M')"
-          echo "最近5个workflow运行记录:"
-          gh run list --workflow=monitor.yml --limit=5
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
