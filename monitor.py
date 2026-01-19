@@ -9,6 +9,7 @@ load_dotenv()  # ← 添加这行（加载.env文件）
 import os
 import time
 import json
+import sys
 import logging
 from datetime import datetime
 from telegram import Bot
