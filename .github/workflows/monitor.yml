@@ -1,48 +1,24 @@
 name: PAXG-XAUT-Spread-Monitor
 
-# 关键：schedule 必须在 on: 下面
 on:
   schedule:
-    - cron: '*/30 * * * *'  # ⭐ 每30分钟运行一次
-  workflow_dispatch:  # 保留手动触发
+    - cron: '*/30 * * * *'  # 每30分钟
+  workflow_dispatch:
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-      
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-      
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-      
-      - name: Restore state cache
-        uses: actions/cache@v3
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with: { python-version: '3.9' }
+      - run: pip install -r requirements.txt
+      - uses: actions/cache@v3
         with:
           path: /tmp/spread_state.pkl
           key: paxg-spread-state-${{ github.run_id }}
-          restore-keys: |
-            paxg-spread-state-
-      
-      - name: Run monitor (single check)
+          restore-keys: paxg-spread-state-
+      - run: python monitor.py --once
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-        run: |
-          timeout 120s python monitor.py --once
-      
-      - name: Save state
-        if: always()
-        run: |
-          if [ -f /tmp/spread_state.pkl ]; then
-            cp /tmp/spread_state.pkl ./state.pkl
-            echo "✅ 状态已保存"
-          else
-            echo "⚠️ 无状态文件"
-          fi
