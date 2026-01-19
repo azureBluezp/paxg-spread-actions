@@ -7,27 +7,19 @@ import logging
 import pickle
 import argparse
 import sys
+import json
 from dataclasses import dataclass, field
 from telegram import Bot
+from telegram.error import TelegramError
 from typing import Dict, Optional
 
-# ===== 配置常量 =====
-CONFIG = {
-    "CHECK_SEC": int(os.getenv("CHECK_SEC", 30)),
-    "BASE_URL": "https://omni-client-api.prod.ap-northeast-1.variational.io",
-    "HIGH_THRESHOLD": 16.0,
-    "LOW_THRESHOLD": 10.0,
-    "DURATION_SEC": 1.0,
-    "GEAR_STEP": 0.5,
-}
-
-# ===== 日志配置 =====
+# ===== 强制DEBUG日志 =====
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
+    level=logging.DEBUG,  # <--- 强制DEBUG级别
+    format='%(asctime)s [%(levelname)s] %(funcName)s:%(lineno)d - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("monitor.log", encoding='utf-8')
+        logging.FileHandler("monitor_debug.log", encoding='utf-8')
     ]
 )
 logger = logging.getLogger(__name__)
@@ -54,7 +46,6 @@ class PriceData:
 
 
 class PersistState:
-    """状态持久化类"""
     FILE_PATH = "/tmp/spread_state.pkl"
     
     @classmethod
@@ -63,10 +54,11 @@ class PersistState:
             try:
                 with open(cls.FILE_PATH, 'rb') as f:
                     data = pickle.load(f)
-                    logger.info(f"加载历史状态: last_high_gear={data.get('high')}, last_low_gear={data.get('low')}")
+                    logger.info(f"✅ 状态加载成功: {data}")
                     return data.get('high'), data.get('low')
             except Exception as e:
-                logger.warning(f"状态加载失败: {e}")
+                logger.warning(f"❌ 状态加载失败: {e}")
+        logger.info("⚠️ 无历史状态文件")
         return None, None
     
     @classmethod
@@ -74,13 +66,23 @@ class PersistState:
         try:
             with open(cls.FILE_PATH, 'wb') as f:
                 pickle.dump({'high': high_gear, 'low': low_gear}, f)
-                logger.debug("状态已保存")
+                logger.info(f"✅ 状态保存成功: high={high_gear}, low={low_gear}")
         except Exception as e:
-            logger.error(f"状态保存失败: {e}")
+            logger.error(f"❌ 状态保存失败: {e}")
 
 
 class SpreadMonitor:
     def __init__(self, bot_token: str, chat_id: str):
+        logger.info("=" * 80)
+        logger.info("🔧 初始化 SpreadMonitor")
+        logger.info(f"📱 Bot Token: {bot_token[:10]}...{bot_token[-5:]}")
+        logger.info(f"💬 Chat ID: {chat_id}")
+        logger.info("=" * 80)
+        
+        # 验证 Bot Token 和 Chat ID 格式
+        if ":" not in bot_token:
+            raise ValueError("Bot Token 格式错误: 必须包含 ':'")
+        
         self.bot = Bot(token=bot_token)
         self.chat_id = chat_id
         self.cache = PriceData()
@@ -90,13 +92,14 @@ class SpreadMonitor:
         self._load_persistent_state()
     
     def _load_persistent_state(self):
-        """加载持久化的档位记忆"""
+        logger.info("📂 正在加载历史状态...")
         high_gear, low_gear = PersistState.load()
         self.high_state.last_gear = high_gear
         self.low_state.last_gear = low_gear
+        logger.info(f"📊 最终状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}")
     
     def _save_persistent_state(self):
-        """保存当前档位记忆"""
+        logger.info("💾 正在保存状态...")
         PersistState.save(self.high_state.last_gear, self.low_state.last_gear)
     
     def get_both_assets(self) -> bool:
@@ -104,6 +107,7 @@ class SpreadMonitor:
             return True
         
         try:
+            logger.debug("🌐 请求API...")
             resp = requests.get(
                 f"{CONFIG['BASE_URL']}/metadata/stats",
                 timeout=10
@@ -113,15 +117,16 @@ class SpreadMonitor:
             
             listings = {item["ticker"]: item for item in data["listings"]}
             if "PAXG" not in listings or "XAUT" not in listings:
-                logger.error("缺少交易对数据")
+                logger.error("❌ 缺少交易对")
                 return False
             
             self.cache.paxg = self._parse_asset(listings["PAXG"])
             self.cache.xaut = self._parse_asset(listings["XAUT"])
             self.cache.last_update = time.time()
+            logger.debug("✅ API成功")
             return True
         except Exception as e:
-            logger.error(f"API请求失败: {e}")
+            logger.error(f"❌ API失败: {e}")
             return False
     
     @staticmethod
@@ -199,65 +204,61 @@ class SpreadMonitor:
             state.clear_timers()
     
     def send_message(self, msg: str) -> None:
-        """发送Telegram消息"""
+        """发送消息（带调试日志）"""
         try:
-            self.bot.send_message(chat_id=self.chat_id, text=msg)
+            logger.info(f"📤 发送消息: {msg.replace('\n', ' ')}")
+            result = self.bot.send_message(chat_id=self.chat_id, text=msg)
+            logger.info(f"✅ 消息成功: {result.message_id}")
+            time.sleep(2)  # 确保发送完成
+        except TelegramError as e:
+            logger.error(f"❌ Telegram错误: {e}")
+            logger.error(f"错误详情: {e.message}")
         except Exception as e:
-            logger.error(f"Telegram发送失败: {e}")
+            logger.error(f"❌ 未知错误: {e}")
     
     def run_once(self) -> None:
-        """单次运行模式 - 用于GitHub Actions"""
-        logger.info("单次运行模式启动")
+        """单次运行模式"""
+        logger.info("=" * 80)
+        logger.info("🚀 单次运行模式启动")
+        logger.info(f"⏰ 时间: {dt.datetime.now()}")
+        logger.info(f"📊 状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}")
+        logger.info("=" * 80)
         
-        # 发送启动消息
+        # 发送启动消息（强制等待）
         try:
-            start_msg = (
-                f"✅ Actions监控启动\n"
-                f"状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}"
-            )
-            self.bot.send_message(chat_id=self.chat_id, text=start_msg)
-            logger.info("启动消息已发送")
-            time.sleep(3)  # 确保消息发送完成
+            start_msg = f"✅ Actions监控启动\n高价档: {self.high_state.last_gear}\n低价档: {self.low_state.last_gear}"
+            logger.info(f"📤 正在发送启动消息...")
+            self.send_message(start_msg)
+            logger.info("⏳ 等待消息确认...")
+            time.sleep(5)  # <--- 强制等待5秒
         except Exception as e:
-            logger.error(f"启动消息失败: {e}")
+            logger.error(f"❌ 启动消息失败: {e}")
         
-        # 执行一次完整检查
+        # 检测价差
         try:
             if self.get_both_assets():
                 spreads = self.calculate_spreads()
                 if spreads:
                     gear = self.calculate_gear(spreads["mark"])
-                    logger.info(f"检测: Mark={spreads['mark']:.2f} 档位={gear:.1f}")
+                    logger.info(f"🎯 检测: Mark={spreads['mark']:.2f}")
                     
-                    self.check_threshold(
-                        spreads, self.high_state, self.low_state, 
-                        CONFIG["HIGH_THRESHOLD"], True
-                    )
-                    self.check_threshold(
-                        spreads, self.low_state, self.high_state, 
-                        CONFIG["LOW_THRESHOLD"], False
-                    )
+                    self.check_threshold(spreads, self.high_state, self.low_state, CONFIG["HIGH_THRESHOLD"], True)
+                    self.check_threshold(spreads, self.low_state, self.high_state, CONFIG["LOW_THRESHOLD"], False)
         except Exception as e:
-            logger.exception(f"检测异常: {e}")
+            logger.exception(f"❌ 检测失败: {e}")
         
-        logger.info("等待消息发送完成...")
+        logger.info("⏳ 最终等待...")
         time.sleep(3)
+        logger.info("✅ 单次运行结束")
     
     def run(self) -> None:
-        """持续运行模式 - 用于VPS"""
-        logger.info("=" * 60)
-        logger.info("监控服务启动中...")
-        logger.info(f"配置: 检测间隔={CONFIG['CHECK_SEC']}秒")
-        logger.info(f"状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}")
-        logger.info("=" * 60)
+        """持续运行模式"""
+        logger.info("=" * 80)
+        logger.info("🚀 VPS监控启动")
+        logger.info(f"⚙️ 配置: {CONFIG}")
+        logger.info("=" * 80)
         
-        # 发送启动消息
-        try:
-            start_msg = f"✅ VPS监控启动成功\n检测间隔: {CONFIG['CHECK_SEC']}秒"
-            self.send_message(start_msg)
-            logger.info("启动消息已发送到 Telegram")
-        except Exception as e:
-            logger.error(f"启动消息发送失败: {e}")
+        self.send_message("✅ VPS监控启动成功")
         
         while True:
             try:
@@ -265,44 +266,45 @@ class SpreadMonitor:
                     spreads = self.calculate_spreads()
                     if spreads:
                         gear = self.calculate_gear(spreads["mark"])
-                        logger.info(f"{dt.datetime.now():%H:%M:%S}  Mark={spreads['mark']:.2f}  档位={gear:.1f}")
+                        logger.info(f"{dt.datetime.now():%H:%M:%S} Mark={spreads['mark']:.2f}")
                         
-                        self.check_threshold(
-                            spreads, self.high_state, self.low_state, 
-                            CONFIG["HIGH_THRESHOLD"], True
-                        )
-                        self.check_threshold(
-                            spreads, self.low_state, self.high_state, 
-                            CONFIG["LOW_THRESHOLD"], False
-                        )
+                        self.check_threshold(spreads, self.high_state, self.low_state, CONFIG["HIGH_THRESHOLD"], True)
+                        self.check_threshold(spreads, self.low_state, self.high_state, CONFIG["LOW_THRESHOLD"], False)
                 
             except Exception as e:
-                logger.exception(f"主循环异常: {e}")
+                logger.exception(f"❌ 主循环异常: {e}")
             
             time.sleep(CONFIG["CHECK_SEC"])
 
 
 def validate_config() -> bool:
+    logger.info("🔍 验证配置...")
     required = ["BOT_TOKEN", "CHAT_ID"]
     for var in required:
-        if not os.getenv(var):
-            logger.error(f"缺少必需的环境变量: {var}")
+        value = os.getenv(var)
+        if not value:
+            logger.error(f"❌ 缺少 {var}")
             return False
+        logger.info(f"✅ {var}: {value[:10]}...")
     
     token = os.getenv("BOT_TOKEN")
-    if not token or ":" not in token:
-        logger.error("BOT_TOKEN格式无效")
+    if ":" not in token:
+        logger.error("❌ BOT_TOKEN格式错误")
         return False
     
+    logger.info("✅ 配置验证通过")
     return True
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--once", action="store_true", help="单次运行模式（用于GitHub Actions）")
+    parser.add_argument("--once", action="store_true", help="GitHub Actions单次模式")
     args = parser.parse_args()
     
+    logger.info(f"🎯 运行模式: {'单次' if args.once else '持续'}")
+    
     if not validate_config():
+        logger.error("❌ 配置验证失败，退出")
         exit(1)
     
     monitor = SpreadMonitor(
@@ -310,7 +312,11 @@ if __name__ == "__main__":
         chat_id=os.getenv("CHAT_ID")
     )
     
-    if args.once:
-        monitor.run_once()
-    else:
-        monitor.run()
+    try:
+        if args.once:
+            monitor.run_once()
+        else:
+            monitor.run()
+    except Exception as e:
+        logger.exception(f"❌ 致命错误: {e}")
+        exit(1)
