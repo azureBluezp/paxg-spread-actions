@@ -213,7 +213,7 @@ class SpreadMonitor:
             state.clear_timers()
     
     def send_message(self, msg: str) -> None:
-        """发送Telegram消息（修复版）"""
+        """发送Telegram消息（修复f-string错误）"""
         try:
             # 修复：在f-string外部处理字符串
             clean_msg = msg.replace('\n', ' ')
@@ -221,7 +221,7 @@ class SpreadMonitor:
             
             result = self.bot.send_message(chat_id=self.chat_id, text=msg)
             logger.info(f"✅ 消息成功: {result.message_id}")
-            time.sleep(2)  # 确保发送完成
+            time.sleep(2)
         except Exception as e:
             logger.error(f"❌ 发送失败: {e}")
     
