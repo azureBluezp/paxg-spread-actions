@@ -11,9 +11,9 @@ from dataclasses import dataclass, field
 from telegram import Bot
 from typing import Dict, Optional
 
-# ===== 配置常量 =====
+# ===== 配置常量（检查间隔10秒）=====
 CONFIG = {
-    "CHECK_SEC": int(os.getenv("CHECK_SEC", 30)),
+    "CHECK_SEC": int(os.getenv("CHECK_SEC", 10)),  # 从30改为10秒
     "BASE_URL": "https://omni-client-api.prod.ap-northeast-1.variational.io",
     "HIGH_THRESHOLD": 16.0,
     "LOW_THRESHOLD": 10.0,
@@ -212,7 +212,7 @@ class SpreadMonitor:
             self.send_message(msg)
             logger.info(f"  ✅ 价格报警发送: 档位 {current_gear:.1f}")
             state.clear_timers()
-            return True
+            return True  # 触发了报警
         
         return False
     
@@ -228,8 +228,8 @@ class SpreadMonitor:
         except Exception as e:
             logger.error(f"❌ 发送失败: {e}")
     
-    def run_continuous(self, minutes: int = 30):
-        """持续运行模式（30分钟）"""
+    def run_continuous(self, minutes: int = 5):
+        """持续运行模式（5分钟）"""
         logger.info("=" * 80)
         logger.info(f"🚀 持续监控启动: 运行 {minutes} 分钟")
         logger.info(f"⏰ 开始时间: {dt.datetime.now()}")
@@ -283,14 +283,13 @@ class SpreadMonitor:
         logger.info("=" * 80)
     
     def run_once(self) -> None:
-        """单次运行模式（不推荐使用）"""
+        """单次运行模式"""
         logger.info("=" * 80)
         logger.info("🚀 单次检测模式启动")
         logger.info(f"⏰ 时间: {dt.datetime.now()}")
         logger.info(f"档位状态: 高价档={self.high_state.last_gear}, 低价档={self.low_state.last_gear}")
         logger.info("=" * 80)
         
-        # 静默检测，不发送启动消息
         try:
             if self.get_both_assets():
                 spreads = self.calculate_spreads()
@@ -298,10 +297,7 @@ class SpreadMonitor:
                     gear = self.calculate_gear(spreads["mark"])
                     logger.info(f"🎯 检测: Mark={spreads['mark']:.2f} 档位={gear:.1f}")
                     
-                    # 检查高价区
                     self.check_threshold(spreads, self.high_state, self.low_state, CONFIG["HIGH_THRESHOLD"], True)
-                    
-                    # 检查低价区
                     self.check_threshold(spreads, self.low_state, self.high_state, CONFIG["LOW_THRESHOLD"], False)
         except Exception as e:
             logger.exception(f"❌ 检测失败: {e}")
@@ -309,8 +305,8 @@ class SpreadMonitor:
         logger.info("✅ 单次检测结束")
     
     def run(self) -> None:
-        """默认持续运行30分钟"""
-        self.run_continuous(minutes=30)
+        """默认持续运行5分钟"""
+        self.run_continuous(minutes=5)  # 从30改为5
 
 
 def validate_config() -> bool:
@@ -337,7 +333,7 @@ if __name__ == "__main__":
     parser.add_argument("--once", action="store_true", help="单次运行模式")
     args = parser.parse_args()
     
-    logger.info(f"🎯 运行模式: {'单次' if args.once else '持续30分钟'}")
+    logger.info(f"🎯 运行模式: {'单次' if args.once else '持续5分钟'}")
     
     if not validate_config():
         logger.error("❌ 配置验证失败，退出")
@@ -350,9 +346,9 @@ if __name__ == "__main__":
     
     try:
         if args.once:
-            monitor.run_once()  # 不推荐
+            monitor.run_once()
         else:
-            monitor.run()  # 持续运行30分钟
+            monitor.run()  # 持续运行5分钟
     except Exception as e:
         logger.exception(f"❌ 致命错误: {e}")
         exit(1)
