@@ -5,6 +5,7 @@ import time
 import datetime as dt
 import requests
 import logging
+import pickle
 from dataclasses import dataclass, field
 from telegram import Bot
 from typing import Dict, Optional
@@ -33,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SpreadState:
-    """状态管理类"""
+    """状态管理类，支持持久化"""
     timers: Dict[float, float] = field(default_factory=dict)
     peak: float = 0.0
     last_gear: Optional[float] = None
@@ -44,13 +45,40 @@ class SpreadState:
 
 @dataclass
 class PriceData:
-    """价格数据缓存"""
     paxg: Optional[Dict] = None
     xaut: Optional[Dict] = None
     last_update: float = 0.0
     
     def is_expired(self, ttl: float = 5.0) -> bool:
         return time.time() - self.last_update > ttl
+
+
+class PersistState:
+    """状态持久化管理"""
+    FILE_PATH = "/tmp/spread_state.pkl"
+    
+    @classmethod
+    def load(cls) -> tuple[Optional[float], Optional[float]]:
+        """从磁盘加载档位记忆"""
+        if os.path.exists(cls.FILE_PATH):
+            try:
+                with open(cls.FILE_PATH, 'rb') as f:
+                    data = pickle.load(f)
+                    logger.info(f"加载历史状态: last_high_gear={data.get('high')}, last_low_gear={data.get('low')}")
+                    return data.get('high'), data.get('low')
+            except Exception as e:
+                logger.warning(f"状态加载失败: {e}")
+        return None, None
+    
+    @classmethod
+    def save(cls, high_gear: Optional[float], low_gear: Optional[float]) -> None:
+        """保存档位记忆到磁盘"""
+        try:
+            with open(cls.FILE_PATH, 'wb') as f:
+                pickle.dump({'high': high_gear, 'low': low_gear}, f)
+                logger.debug(f"状态已保存: high={high_gear}, low={low_gear}")
+        except Exception as e:
+            logger.error(f"状态保存失败: {e}")
 
 
 class SpreadMonitor:
@@ -60,12 +88,24 @@ class SpreadMonitor:
         self.cache = PriceData()
         self.high_state = SpreadState(peak=CONFIG["HIGH_THRESHOLD"])
         self.low_state = SpreadState(peak=CONFIG["LOW_THRESHOLD"])
+        
+        # 启动时加载历史状态
+        self._load_persistent_state()
+    
+    def _load_persistent_state(self):
+        """加载持久化的档位记忆"""
+        high_gear, low_gear = PersistState.load()
+        self.high_state.last_gear = high_gear
+        self.low_state.last_gear = low_gear
+    
+    def _save_persistent_state(self):
+        """保存当前档位记忆"""
+        PersistState.save(self.high_state.last_gear, self.low_state.last_gear)
     
     def get_both_assets(self) -> bool:
-        """获取资产数据，带5秒缓存"""
         if not self.cache.is_expired():
             return True
-            
+        
         try:
             resp = requests.get(
                 f"{CONFIG['BASE_URL']}/metadata/stats",
@@ -78,7 +118,7 @@ class SpreadMonitor:
             if "PAXG" not in listings or "XAUT" not in listings:
                 logger.error("缺少交易对数据")
                 return False
-                
+            
             self.cache.paxg = self._parse_asset(listings["PAXG"])
             self.cache.xaut = self._parse_asset(listings["XAUT"])
             self.cache.last_update = time.time()
@@ -89,7 +129,6 @@ class SpreadMonitor:
     
     @staticmethod
     def _parse_asset(item: dict) -> dict:
-        """统一解析资产数据"""
         return {
             "mark": float(item["mark_price"]),
             "bid_1k": float(item["quotes"]["size_1k"]["bid"]),
@@ -97,7 +136,6 @@ class SpreadMonitor:
         }
     
     def calculate_spreads(self) -> Optional[dict]:
-        """计算各类价差"""
         if not self.cache.paxg or not self.cache.xaut:
             return None
         paxg, xaut = self.cache.paxg, self.cache.xaut
@@ -109,7 +147,6 @@ class SpreadMonitor:
     
     @staticmethod
     def calculate_gear(value: float) -> float:
-        """计算档位（0.5步长）"""
         return int(value * 2) / 2
     
     def check_threshold(
@@ -120,7 +157,6 @@ class SpreadMonitor:
         threshold: float,
         is_high: bool
     ) -> None:
-        """统一阈值检查逻辑，带双向重置"""
         mark_spread = spreads["mark"]
         directional_spread = spreads["short" if is_high else "long"]
         
@@ -152,7 +188,10 @@ class SpreadMonitor:
         if time.time() - state.timers[current_gear] >= CONFIG["DURATION_SEC"]:
             state.peak = mark_spread
             state.last_gear = current_gear
-            opposite_state.last_gear = None  # 核心：重置对方档位记忆
+            opposite_state.last_gear = None  # 重置对方档位记忆
+            
+            # 立即保存状态
+            self._save_persistent_state()
             
             action = "做空PAXG@市价，做多XAUT@市价" if is_high else "做多PAXG@市价，做空XAUT@市价"
             msg = (
@@ -167,16 +206,14 @@ class SpreadMonitor:
             state.clear_timers()
     
     def send_message(self, msg: str) -> None:
-        """发送消息，带错误处理"""
         try:
             self.bot.send_message(chat_id=self.chat_id, text=msg)
         except Exception as e:
             logger.error(f"Telegram发送失败: {e}")
     
     def run(self) -> None:
-        """主循环"""
         logger.info("监控服务启动")
-        self.send_message("✅ 循环监控已启动 (档位记忆双向重置)")
+        self.send_message("✅ 循环监控已启动 (持久化+进程锁)")
         
         while True:
             try:
@@ -202,7 +239,6 @@ class SpreadMonitor:
 
 
 def validate_config() -> bool:
-    """环境变量预校验"""
     required = ["BOT_TOKEN", "CHAT_ID"]
     for var in required:
         if not os.getenv(var):
@@ -218,7 +254,7 @@ def validate_config() -> bool:
 
 
 def check_duplicate() -> None:
-    """进程锁检查，防止重复启动"""
+    """进程锁检查"""
     pid_file = "/tmp/spread_monitor.pid"
     
     if os.path.exists(pid_file):
@@ -236,7 +272,7 @@ def check_duplicate() -> None:
 
 
 if __name__ == "__main__":
-    check_duplicate()  # 新增：进程锁检查
+    check_duplicate()
     
     if not validate_config():
         exit(1)
