@@ -1,4 +1,4 @@
-ssh root@165.232.160.78
+
 
 # 查看状态
 sudo systemctl status paxg-monitor.service --no-pager
@@ -12,21 +12,22 @@ sudo journalctl -u paxg-monitor.service -f
 # 重启服务
 sudo systemctl restart paxg-monitor.service
 
-BOT_TOKEN   = 8349710919:AAHqNaREjy87vl43CbLx5CLHPnnsYNVonFE
-CHAT_ID     = -5173315739
 
 
-bxOnCeK-j6WiGKWDMvCH9Q
 
+
+
+
+
+# 在 PowerShell 中登录
+ssh root@165.232.160.78
+
+# 停止当前服务
 sudo systemctl stop paxg-monitor.service
 
 
+长代码  
 
-sudo systemctl start paxg-monitor.service
-sudo journalctl -u paxg-monitor.service -f
-
-
-curl "https://api.crawlbase.com/?token=bxOnCeK-j6WiGKWDMvCH9Q&url=https://example.com"
 
 
 sudo cat > /home/paxgmonitor/paxg-monitor/.env << 'EOF'
@@ -36,11 +37,58 @@ CHECK_SEC=10
 CRAWLBASE_TOKEN=bxOnCeK-j6WiGKWDMvCH9Q
 EOF
 
+# 设置文件权限
+sudo chown paxgmonitor:paxgmonitor /home/paxgmonitor/paxg-monitor/.env
+sudo chmod 600 /home/paxgmonitor/paxg-monitor/.env
 
 
 
 
 
+创建数据目录
+
+sudo mkdir -p /home/paxgmonitor/paxg-monitor/data
+sudo chown -R paxgmonitor:paxgmonitor /home/paxgmonitor/paxg-monitor
+sudo chmod -R 755 /home/paxgmonitor/paxg-monitor
+
+
+
+创建 Systemd 服务文件
+
+sudo cat > /etc/systemd/system/paxg-monitor.service << 'EOF'
+[Unit]
+Description=PAXG Spread Monitor
+After=network.target
+
+[Service]
+Type=simple
+User=paxgmonitor
+WorkingDirectory=/home/paxgmonitor/paxg-monitor
+Environment="PATH=/home/paxgmonitor/paxg-monitor/venv/bin"
+ExecStart=/home/paxgmonitor/paxg-monitor/venv/bin/python /home/paxgmonitor/paxg-monitor/main.py
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+
+sudo systemctl daemon-reload
+
+
+
+
+# 启动服务
+sudo systemctl start paxg-monitor.service
+
+# 查看状态
+sudo systemctl status paxg-monitor.service --no-pager
+
+# 查看日志（观察3-5分钟）
+sudo journalctl -u paxg-monitor.service -f
 
 
 
