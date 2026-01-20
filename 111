@@ -1,5 +1,17 @@
 ssh root@165.232.160.78
 
+# 查看状态
+sudo systemctl status paxg-monitor.service --no-pager
+
+# 查看最新日志
+sudo journalctl -u paxg-monitor.service -n 20 --no-pager
+
+# 实时查看日志
+sudo journalctl -u paxg-monitor.service -f
+
+# 重启服务
+sudo systemctl restart paxg-monitor.service
+
 BOT_TOKEN   = 8349710919:AAHqNaREjy87vl43CbLx5CLHPnnsYNVonFE
 CHAT_ID     = -5173315739
 
@@ -17,3 +29,14 @@ EOF"
 
 sudo systemctl start paxg-monitor.service
 sudo journalctl -u paxg-monitor.service -f
+
+
+curl "https://api.crawlbase.com/?token=bxOnCeK-j6WiGKWDMvCH9Q&url=https://example.com"
+
+
+sudo su - paxgmonitor -c 'cd paxg-monitor && cat > .env << "EOF"
+BOT_TOKEN=8349710919:AAHqNaREjy87vl43CbLx5CLHPnnsYNVonFE
+CHAT_ID=-5173315739
+CHECK_SEC=10
+CRAWLBASE_TOKEN=bxOnCeK-j6WiGKWDMvCH9Q
+EOF'
